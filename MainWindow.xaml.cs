@@ -919,7 +919,8 @@ namespace ProfessionalPowerCopyCatalogModern
                         PwToolbarLibrary,
                         PwToolbarParameters,
                         PwToolbarChecker,
-                        ShutdownProduct);
+                        ShutdownProduct,
+                        PwToolbarDiagnose);
                     _pwToolbar.Closed += delegate { _pwToolbar = null; };
                 }
                 _pwToolbar.Show();
@@ -1021,6 +1022,42 @@ namespace ProfessionalPowerCopyCatalogModern
                 StatusText.Text = message;
                 if (progress != null) progress.Complete("STROKE TOOL", message, true);
                 else ToastWindow.Show("STROKE TOOL", message, true);
+            }
+        }
+
+        /// <summary>Right-click on the parameters icon: dumps the parameter tree
+        /// of the active CATPart (sets, parameters, values, and what the
+        /// dashboard detects) and opens the report - the fastest way to see why
+        /// a template's parameter is not picked up.</summary>
+        private async void PwToolbarDiagnose()
+        {
+            ToastWindow progress = null;
+            try
+            {
+                if (!EnsureCatiaConnection())
+                    throw new InvalidOperationException("CATIA is not running.");
+
+                progress = ToastWindow.ShowProgress("DIAGNOSTIC", "Reading the parameter tree…");
+
+                string scriptPath = LifterStudioScript.Write();
+                string result = await RunCatiaScriptAsync(scriptPath, "DumpParameterTree", true);
+
+                if (!result.StartsWith("OK|", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException(
+                        result.StartsWith("ERROR:", StringComparison.OrdinalIgnoreCase)
+                            ? result.Substring(6).Trim()
+                            : "The diagnostic could not be produced.");
+
+                string reportPath = result.Substring(3);
+                if (progress != null) progress.Complete("DIAGNOSTIC", "Parameter tree report opened.");
+                StatusText.Text = "Parameter diagnostic: " + reportPath;
+                try { Process.Start("notepad.exe", "\"" + reportPath + "\""); }
+                catch { Process.Start(reportPath); }
+            }
+            catch (Exception ex)
+            {
+                if (progress != null) progress.Complete("DIAGNOSTIC", ex.Message, true);
+                else ToastWindow.Show("DIAGNOSTIC", ex.Message, true);
             }
         }
 

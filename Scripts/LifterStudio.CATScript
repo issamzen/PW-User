@@ -1694,20 +1694,17 @@ Sub UpdateValues(part, data, rsp, instanceIndex)
     problem = ""
     Set undercutSet = GetUndercutSet(part, instanceIndex)
     Set headSet = GetHeadSet(part, instanceIndex)
-    If undercutSet Is Nothing Then problem = "Selected UNDERCUT_DEPTH instance was not found."
-    If headSet Is Nothing And Len(problem) = 0 Then problem = "Matching LIFTER_HEAD parameter set was not found."
 
-    If Len(problem) = 0 Then
-        Set a = FindDirect(undercutSet, p1)
-        Set b = FindDirect(undercutSet, p2)
-        Set c = FindDirect(undercutSet, P3)
-        ' HAS_EXTERNAL_FACE is not always stored in the UNDERCUT set: look in
-        ' the LIFTER_HEAD set and then anywhere in the part before giving up.
-        Set d = FindInstanceParam(part, undercutSet, headSet, P4, instanceIndex)
-        Set e = FindDirect(headSet, P5)
-        If a Is Nothing Or b Is Nothing Or c Is Nothing Then problem = "An UNDERCUT_DEPTH parameter is missing."
-        If (d Is Nothing Or e Is Nothing) And Len(problem) = 0 Then problem = "HAS_EXTERNAL_FACE or UNDERCUT_LENGTH is missing."
-    End If
+    ' Templates do not all group the parameters the same way (some keep
+    ' HAS_EXTERNAL_FACE next to UNDERCUT_LENGTH), so every parameter is
+    ' resolved in its expected set first and then anywhere in the tree.
+    Set a = FindInstanceParam(part, undercutSet, headSet, p1, instanceIndex)
+    Set b = FindInstanceParam(part, undercutSet, headSet, p2, instanceIndex)
+    Set c = FindInstanceParam(part, undercutSet, headSet, P3, instanceIndex)
+    Set d = FindInstanceParam(part, undercutSet, headSet, P4, instanceIndex)
+    Set e = FindInstanceParam(part, headSet, undercutSet, P5, instanceIndex)
+
+    problem = MissingList(part, a, b, c, d, e)
 
     If Len(problem) > 0 Then
         MsgBox "Parameter update failed." & vbCrLf & problem, vbCritical, APP_TITLE
@@ -1873,16 +1870,12 @@ Sub SendValues(part, rsp, instanceIndex)
     Dim rootStroke
     Set undercutSet = GetUndercutSet(part, instanceIndex)
     Set headSet = GetHeadSet(part, instanceIndex)
-    If undercutSet Is Nothing Or headSet Is Nothing Then
-        SendResponse rsp, "NOT_FOUND", "", "", "", "", "", "", "", ""
-        Exit Sub
-    End If
 
-    Set a = FindDirect(undercutSet, p1)
-    Set b = FindDirect(undercutSet, p2)
-    Set c = FindDirect(undercutSet, P3)
+    Set a = FindInstanceParam(part, undercutSet, headSet, p1, instanceIndex)
+    Set b = FindInstanceParam(part, undercutSet, headSet, p2, instanceIndex)
+    Set c = FindInstanceParam(part, undercutSet, headSet, P3, instanceIndex)
     Set d = FindInstanceParam(part, undercutSet, headSet, P4, instanceIndex)
-    Set e = FindDirect(headSet, P5)
+    Set e = FindInstanceParam(part, headSet, undercutSet, P5, instanceIndex)
     If a Is Nothing Or b Is Nothing Or c Is Nothing Then
         SendResponse rsp, "INCOMPLETE", "", "", "", "", "", "", "", ""
         Exit Sub
@@ -2666,6 +2659,146 @@ End Sub
 '==================================================================
 
 Dim gPart, gDoc
+
+'------------------------------------------------------------------
+' Human readable list of the parameters that could not be resolved,
+' with the number of candidates found in the whole tree - so the
+' message says WHAT is missing instead of "one of these two".
+'------------------------------------------------------------------
+Function MissingList(part, a, b, c, d, e)
+    On Error Resume Next
+    Dim missing
+    missing = ""
+    If a Is Nothing Then missing = AppendMissing(missing, part, p1)
+    If b Is Nothing Then missing = AppendMissing(missing, part, p2)
+    If c Is Nothing Then missing = AppendMissing(missing, part, P3)
+    If d Is Nothing Then missing = AppendMissing(missing, part, P4)
+    If e Is Nothing Then missing = AppendMissing(missing, part, P5)
+    If Len(missing) > 0 Then
+        MissingList = "These parameters were not found on instance: " & missing & _
+                      vbCrLf & "Right-click the Parameters icon of the PW toolbar to dump the parameter tree."
+    Else
+        MissingList = ""
+    End If
+    Err.Clear
+End Function
+
+Function AppendMissing(current, part, wantedName)
+    On Error Resume Next
+    Dim all, text
+    Set all = NewStore()
+    CollectNamedParams part.Parameters.RootParameterSet, wantedName, all
+    text = wantedName & " (" & CStr(all.Count) & " candidate(s) in the tree)"
+    If Len(current) = 0 Then
+        AppendMissing = text
+    Else
+        AppendMissing = current & ", " & text
+    End If
+    Err.Clear
+End Function
+
+'------------------------------------------------------------------
+' Diagnostic dump: the whole parameter tree + what the dashboard
+' detects, written next to the session files and opened by the app.
+'------------------------------------------------------------------
+Function DumpParameterTree()
+    On Error Resume Next
+    Dim doc, part, path, f, sets, i
+
+    DumpParameterTree = "ERROR:no CATPart is active"
+    If CATIA.Documents.Count = 0 Then Exit Function
+    If TypeName(CATIA.ActiveDocument) <> "PartDocument" Then Exit Function
+
+    Set doc = CATIA.ActiveDocument
+    Set part = doc.Part
+    Set gPart = part
+    Set gDoc = doc
+
+    path = SessionDir() & "\parameter-tree.txt"
+    DeleteFile path
+    Set f = NewWriter(path)
+    If f Is Nothing Then
+        DumpParameterTree = "ERROR:the report file could not be written"
+        Exit Function
+    End If
+
+    f.WriteLine "PW-User - lifter parameter diagnostic"
+    f.WriteLine "Document : " & doc.Name
+    f.WriteLine "Generated: " & CStr(Now)
+    f.WriteLine ""
+    f.WriteLine "=========== PARAMETER TREE ==========="
+    DumpSet f, part.Parameters.RootParameterSet, ""
+
+    f.WriteLine ""
+    f.WriteLine "=========== WHAT THE DASHBOARD DETECTS ==========="
+    Set sets = GetUndercutSets(part)
+    f.WriteLine "UNDERCUT sets (need " & p1 & " + " & p2 & " + " & P3 & " + " & P4 & "): " & CStr(sets.Count)
+    For i = 1 To sets.Count
+        f.WriteLine "   " & CStr(i) & ") " & CStr(sets.Item(i).Name)
+    Next
+    Set sets = GetHeadSets(part)
+    f.WriteLine "LIFTER_HEAD sets (need " & P5 & "): " & CStr(sets.Count)
+    For i = 1 To sets.Count
+        f.WriteLine "   " & CStr(i) & ") " & CStr(sets.Item(i).Name)
+    Next
+    f.WriteLine "Instances shown by the dashboard: " & CStr(InstanceCount(part))
+
+    f.WriteLine ""
+    f.WriteLine "=========== PARAMETER SEARCH ==========="
+    DumpSearch f, part, p1
+    DumpSearch f, part, p2
+    DumpSearch f, part, P3
+    DumpSearch f, part, P4
+    DumpSearch f, part, P5
+    DumpSearch f, part, P_STROKE
+    DumpSearch f, part, P_DRAFT
+
+    f.Close
+    Err.Clear
+    DumpParameterTree = "OK|" & path
+End Function
+
+Sub DumpSet(f, parentSet, indent)
+    On Error Resume Next
+    Dim direct, childSets, i, p, value
+
+    f.WriteLine indent & "[SET] " & CStr(parentSet.Name)
+
+    Set direct = Nothing
+    Set direct = parentSet.DirectParameters
+    Err.Clear
+    If Not direct Is Nothing Then
+        For i = 1 To direct.Count
+            Set p = direct.Item(i)
+            value = ""
+            value = CStr(p.ValueAsString)
+            Err.Clear
+            f.WriteLine indent & "    - " & CStr(p.Name) & "  =  " & value & "   [" & TypeName(p) & "]"
+        Next
+    End If
+    Err.Clear
+
+    Set childSets = Nothing
+    Set childSets = parentSet.ParameterSets
+    Err.Clear
+    If childSets Is Nothing Then Exit Sub
+    For i = 1 To childSets.Count
+        DumpSet f, childSets.Item(i), indent & "    "
+    Next
+    Err.Clear
+End Sub
+
+Sub DumpSearch(f, part, wantedName)
+    On Error Resume Next
+    Dim all, i
+    Set all = NewStore()
+    CollectNamedParams part.Parameters.RootParameterSet, wantedName, all
+    f.WriteLine wantedName & " : " & CStr(all.Count) & " match(es)"
+    For i = 1 To all.Count
+        f.WriteLine "    " & CStr(i) & ") " & CStr(all.Item(i).Name) & "  =  " & CStr(all.Item(i).ValueAsString)
+    Next
+    Err.Clear
+End Sub
 
 '------------------------------------------------------------------
 ' Finds a parameter of one instance even when the CATPart stores it
