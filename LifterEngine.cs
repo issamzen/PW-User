@@ -307,45 +307,49 @@ namespace ProfessionalPowerCopyCatalogModern
             return parameter == null ? "" : ValueOnly(parameter);
         }
 
-        /// <summary>part.MainBody with a fallback to the first body (VBA DetectMainBody).</summary>
-        public static dynamic DetectMainBody(dynamic part)
+        /// <summary>Main-body detection (VBA DetectMainBody) using the SAME
+        /// early-bound interop strategy as the main app's PowerCopy lookup
+        /// (FindAndSelectReference): typed MECMOD.Part / INFITF.Selection calls,
+        /// not late-bound dynamic dispatch. Some document states reject
+        /// late-bound calls with E_FAIL while the early-bound path works.</summary>
+        public static dynamic DetectMainBody(MECMOD.PartDocument document)
         {
             Exception error;
-            return DetectMainBody(part, out error);
+            return DetectMainBody(document, out error);
         }
 
-        /// <summary>Same as <see cref="DetectMainBody(object)"/> but reports the
-        /// last COM error instead of swallowing it, so the UI can tell the user
-        /// whether CATIA is busy or the part really has no body.</summary>
-        public static dynamic DetectMainBody(dynamic part, out Exception error)
+        /// <summary>Same as <see cref="DetectMainBody(MECMOD.PartDocument)"/> but
+        /// reports the last COM error instead of swallowing it, so the UI can
+        /// tell the user whether CATIA is busy or the part has no body.</summary>
+        public static dynamic DetectMainBody(MECMOD.PartDocument document, out Exception error)
         {
             error = null;
             try
             {
+                MECMOD.Part part = document.Part;
                 dynamic body = part.MainBody;
                 if (body != null) return body;
             }
             catch (Exception ex) { error = ex; }
             try
             {
+                MECMOD.Part part = document.Part;
                 dynamic bodies = part.Bodies;
                 if (TryCount(bodies) > 0) return bodies.Item(1);
             }
             catch (Exception ex) { error = ex; }
 
-            // Last resort: enumerate the bodies through the document
-            // Selection.Search. This also works when the part's design
-            // collections reject COM calls (e.g. a document that was not
-            // loaded with its full design data).
+            // Last resort: enumerate the bodies through the typed document
+            // Selection.Search - the exact call style FindAndSelectReference
+            // uses to find the Power Copy (proven to work on this CATIA).
             try
             {
-                dynamic document = part.Parent;
-                dynamic selection = document.Selection;
+                INFITF.Selection selection = document.Selection;
                 selection.Clear();
                 selection.Search("'Part Design'.Body,all");
-                if (TryCount(selection) > 0)
+                if (selection.Count2 > 0)
                 {
-                    dynamic body = selection.Item(1).Value;
+                    dynamic body = selection.Item2(1).Value;
                     selection.Clear();
                     return body;
                 }

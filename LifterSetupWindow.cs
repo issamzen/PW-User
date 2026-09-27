@@ -294,7 +294,7 @@ namespace ProfessionalPowerCopyCatalogModern
 
             SetWorking("Detecting the main body…");
             Exception detectError;
-            _detectedBody = LifterEngine.DetectMainBody(_part, out detectError);
+            _detectedBody = LifterEngine.DetectMainBody(_document, out detectError);
             if (_detectedBody == null)
             {
                 _detectDot.Fill = LifterUi.Danger;

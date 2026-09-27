@@ -1239,7 +1239,7 @@ namespace ProfessionalPowerCopyCatalogModern
                         SetStatus("The destination CATPart is not available.", "err");
                         return;
                     }
-                    dynamic body = LifterEngine.DetectMainBody(_part);
+                    dynamic body = LifterEngine.DetectMainBody(Document);
                     if (body == null || !LifterEngine.MeasureStrokeOnBody(_part, body))
                     {
                         SetStatus("STROKE_Distance could not be re-measured.", "err");
