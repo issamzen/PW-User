@@ -211,9 +211,18 @@ panel, no Lifter Studio window** — the card is **not flagged as a lifter**
 the source template — but that only happens when the workflow flag resolves.
 Check the three flag sources (see *How a template is flagged as a lifter*):
 the server catalog row, the package manifest, and the local `catalog.json`
-entry (its `Id` — or `PowerCopyName` — must match the server row). The blue
+entry (matched by `Id`, then `PowerCopyName`, then display `Name`). The blue
 **"Lifter workflow"** badge on the card's details pane tells you immediately
 whether the flag resolved.
+
+**Diagnostics:** select a card — a small gray line under the template name
+shows exactly what the server sent: `ID: … • PowerCopy: … • Workflow: …`.
+To flag a server row via the local `catalog.json`, make the local entry's
+`Id` equal the **ID shown on that line** (or make its `PowerCopyName` /
+`Name` match the displayed values). Note: single-word JSON keys (`id`,
+`name`, `category`…) always reach the app, but snake_case keys such as
+`powercopy_name` do **not** — if the line shows `PowerCopy: —` while your
+MySQL row has a value, that is expected on this API; match on `Id` instead.
 
 **The setup panel appears but "Measurement failed"** — the destination
 CATPart's main body could not be measured (SPAWorkbench / bounding box). Use

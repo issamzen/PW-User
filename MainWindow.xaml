@@ -254,6 +254,9 @@
                     <StackPanel>
                         <TextBlock Text="Template details" Foreground="{StaticResource Muted}" FontSize="11" FontWeight="SemiBold"/>
                         <TextBlock Text="{Binding SelectedItem.Name}" FontSize="28" FontWeight="SemiBold" Margin="0,5,0,0"/>
+                        <!-- Diagnostics: shows exactly what the server sent for this card.
+                             Use it to align the local catalog.json entry (Id must match). -->
+                        <TextBlock x:Name="TemplateMetaText" FontSize="9" Foreground="{StaticResource Muted}" Margin="0,6,0,0"/>
                     </StackPanel>
                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                         <Border Background="#ECFDF5" CornerRadius="16" Padding="12,7">

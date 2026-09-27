@@ -131,6 +131,20 @@ namespace ProfessionalPowerCopyCatalogModern
                         return local;
                 }
             }
+
+            // Last resort: the display name ("name" is a single-word JSON key, so
+            // it always deserializes, unlike snake_case keys such as
+            // "powercopy_name"). Catches the case where the server row uses a
+            // completely different template Id than the local catalog.json entry.
+            string name = (serverItem.Name ?? string.Empty).Trim();
+            if (name.Length > 0)
+            {
+                foreach (CatalogItem local in _localTemplateConfig.Values)
+                {
+                    if (string.Equals((local.Name ?? string.Empty).Trim(), name, StringComparison.OrdinalIgnoreCase))
+                        return local;
+                }
+            }
             return null;
         }
 
@@ -467,6 +481,11 @@ namespace ProfessionalPowerCopyCatalogModern
             LifterWorkflowBadge.Visibility = IsLifterTemplate(SelectedItem)
                 ? Visibility.Visible
                 : Visibility.Collapsed;
+            TemplateMetaText.Text = SelectedItem == null
+                ? string.Empty
+                : "ID: " + (string.IsNullOrWhiteSpace(SelectedItem.Id) ? "—" : SelectedItem.Id.Trim())
+                  + "  •  PowerCopy: " + (string.IsNullOrWhiteSpace(SelectedItem.PowerCopyName) ? "—" : SelectedItem.PowerCopyName)
+                  + "  •  Workflow: " + (string.IsNullOrWhiteSpace(SelectedItem.Workflow) ? "none" : SelectedItem.Workflow);
             StatusText.Text = SelectedItem == null
                 ? "Select a verified engineering template."
                 : "Ready. Use the template in CATIA, then run its integrated check.";
