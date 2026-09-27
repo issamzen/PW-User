@@ -1,0 +1,123 @@
+<Window x:Class="ProfessionalPowerCopyCatalogModern.LicenseWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="PW-User — Licence" Width="400" SizeToContent="Height"
+        WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True"
+        Background="Transparent" Topmost="True" ShowInTaskbar="False"
+        WindowStartupLocation="Manual">
+    <Border CornerRadius="14" Background="White" BorderBrush="#E2E8F0" BorderThickness="1">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="26" ShadowDepth="5" Opacity="0.22" Color="#0F172A"/>
+        </Border.Effect>
+        <StackPanel>
+
+            <!-- header / drag area -->
+            <Border CornerRadius="14,14,0,0" Padding="16,13" MouseLeftButtonDown="Header_OnMouseLeftButtonDown">
+                <Border.Background>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                        <GradientStop Color="#0F172A" Offset="0"/>
+                        <GradientStop Color="#155E75" Offset="1"/>
+                    </LinearGradientBrush>
+                </Border.Background>
+                <Grid>
+                    <StackPanel Orientation="Horizontal">
+                        <Border Width="28" Height="28" CornerRadius="8" Background="#16A7B4">
+                            <TextBlock Text="&#xE8D7;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                       Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <StackPanel Margin="10,0,0,0" VerticalAlignment="Center">
+                            <TextBlock Text="Licence" Foreground="White" FontSize="14" FontWeight="SemiBold"/>
+                            <TextBlock x:Name="HeaderSubText" Text="Activate this workstation"
+                                       Foreground="#93C5FD" FontSize="10"/>
+                        </StackPanel>
+                    </StackPanel>
+                    <TextBlock Text="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="11" Foreground="#93C5FD"
+                               HorizontalAlignment="Right" VerticalAlignment="Center" Cursor="Hand"
+                               MouseLeftButtonDown="Close_OnMouseLeftButtonDown"/>
+                </Grid>
+            </Border>
+
+            <!-- sign-in form -->
+            <StackPanel x:Name="FormPanel" Margin="18,16,18,18">
+                <TextBlock Text="LICENCE ACCOUNT" FontSize="9" FontWeight="Bold" Foreground="#0F8891"
+                           Margin="0,0,0,8"/>
+
+                <TextBlock Text="E-mail" FontSize="11" Foreground="#64748B"/>
+                <Border CornerRadius="8" Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1"
+                        Margin="0,4,0,10" Padding="10,7">
+                    <TextBox x:Name="EmailBox" BorderThickness="0" Background="Transparent" FontSize="12"/>
+                </Border>
+
+                <TextBlock Text="Licence key / password" FontSize="11" Foreground="#64748B"/>
+                <Border CornerRadius="8" Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1"
+                        Margin="0,4,0,10" Padding="10,7">
+                    <PasswordBox x:Name="KeyBox" BorderThickness="0" Background="Transparent" FontSize="12"
+                                 KeyDown="KeyBox_OnKeyDown"/>
+                </Border>
+
+                <CheckBox x:Name="RememberCheck" Content="Keep me activated on this PC" IsChecked="True"
+                          FontSize="11" Foreground="#334155" Margin="0,0,0,12"/>
+
+                <Button x:Name="ActivateButton" Height="36" Click="ActivateButton_OnClick"
+                        Background="#0F8891" Foreground="White" BorderThickness="0" Cursor="Hand"
+                        Content="Activate">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border CornerRadius="9" Background="{TemplateBinding Background}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+            </StackPanel>
+
+            <!-- activated state -->
+            <StackPanel x:Name="ActivePanel" Margin="18,16,18,18" Visibility="Collapsed">
+                <Border CornerRadius="10" Background="#F0FDF4" BorderBrush="#BBF7D0" BorderThickness="1" Padding="12">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE73E;" FontFamily="Segoe MDL2 Assets" Foreground="#16A34A" FontSize="13"/>
+                            <TextBlock x:Name="ActiveTitleText" Text="Licence active" Margin="8,0,0,0"
+                                       FontWeight="SemiBold" Foreground="#166534" FontSize="12"/>
+                        </StackPanel>
+                        <TextBlock x:Name="ActiveUserText" Text="" Foreground="#166534" FontSize="11" Margin="0,6,0,0"/>
+                        <TextBlock x:Name="ActiveExpiryText" Text="" Foreground="#3F6212" FontSize="11" Margin="0,2,0,0"/>
+                        <TextBlock x:Name="ActiveTemplatesText" Text="" Foreground="#3F6212" FontSize="11" Margin="0,2,0,0"/>
+                    </StackPanel>
+                </Border>
+                <Grid Margin="0,12,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="8"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Button Grid.Column="0" Height="32" Click="RefreshButton_OnClick" Content="Refresh"
+                            Background="#E2E8F0" Foreground="#0F172A" BorderThickness="0" Cursor="Hand">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border CornerRadius="8" Background="{TemplateBinding Background}">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+                    <Button Grid.Column="2" Height="32" Click="SignOutButton_OnClick" Content="Sign out"
+                            Background="#FEE2E2" Foreground="#991B1B" BorderThickness="0" Cursor="Hand">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border CornerRadius="8" Background="{TemplateBinding Background}">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+                </Grid>
+            </StackPanel>
+
+            <Border CornerRadius="0,0,14,14" Background="#F8FAFC" Padding="16,9">
+                <TextBlock x:Name="StatusText" Text="Enter your licence account." FontSize="10"
+                           Foreground="#64748B" TextWrapping="Wrap"/>
+            </Border>
+        </StackPanel>
+    </Border>
+</Window>

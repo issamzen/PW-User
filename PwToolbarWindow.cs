@@ -45,14 +45,16 @@ namespace ProfessionalPowerCopyCatalogModern
         private readonly Action _onStroke;
         private readonly Action _onLibrary;
         private readonly Action _onChecker;
+        private readonly Action _onQuit;
         private bool _userMoved;
 
-        public PwToolbarWindow(Action onLicense, Action onStroke, Action onLibrary, Action onChecker)
+        public PwToolbarWindow(Action onLicense, Action onStroke, Action onLibrary, Action onChecker, Action onQuit)
         {
             _onLicense = onLicense;
             _onStroke = onStroke;
             _onLibrary = onLibrary;
             _onChecker = onChecker;
+            _onQuit = onQuit;
 
             Title = "PW-User";
             Width = 58;
@@ -120,19 +122,27 @@ namespace ProfessionalPowerCopyCatalogModern
             stack.Children.Add(MakeButton("\uE9D5", "Checker - feasibility and clash check against the main CATPart",
                 new SolidColorBrush(Color.FromRgb(0xC0, 0x39, 0x2B)), _onChecker));
 
-            var close = new TextBlock
+            var quit = new TextBlock
             {
-                Text = "\uE711",
+                Text = "\uE7E8",
                 FontFamily = new FontFamily("Segoe MDL2 Assets"),
-                FontSize = 10,
+                FontSize = 11,
                 Foreground = new SolidColorBrush(Color.FromRgb(0x7E, 0x96, 0xA5)),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 Margin = new Thickness(0, 6, 0, 0),
                 Cursor = Cursors.Hand,
-                ToolTip = "Hide the PW-User toolbar (it comes back with the app)"
+                ToolTip = "Quit PW-User (the tools stay open until you click here)"
             };
-            close.MouseLeftButtonDown += delegate { Hide(); };
-            stack.Children.Add(close);
+            quit.MouseLeftButtonDown += delegate
+            {
+                MessageBoxResult answer = MessageBox.Show(
+                    "Close the PW-User tools?\n\nThe toolbar and all its panels will be closed.",
+                    "PW-User",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question);
+                if (answer == MessageBoxResult.Yes && _onQuit != null) _onQuit();
+            };
+            stack.Children.Add(quit);
 
             shell.Child = stack;
             return shell;
@@ -201,13 +211,18 @@ namespace ProfessionalPowerCopyCatalogModern
                     return;
                 }
 
+                if (!IsVisible) Show();
+
                 if (IsIconic(catia) || !IsWindowVisible(catia))
                 {
-                    if (IsVisible) Hide();
+                    // CATIA minimised: the bar stays on screen (the user asked
+                    // for tools that are always reachable) and parks on the
+                    // right of the desktop.
+                    if (_userMoved) return;
+                    Left = SystemParameters.WorkArea.Right - Width - 14;
+                    Top = SystemParameters.WorkArea.Top + 120;
                     return;
                 }
-
-                if (!IsVisible) Show();
 
                 if (_userMoved) return;   // the user placed it by hand: leave it there
 

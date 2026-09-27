@@ -39,6 +39,15 @@ namespace ProfessionalPowerCopyCatalogModern
         private LifterStudioWindow _lifterStudio;
         private CatalogItem _lifterSessionItem;
         private PwToolbarWindow _pwToolbar;
+        private LicenseWindow _licenseWindow;
+        private LibraryWindow _libraryWindow;
+
+        /// <summary>Raised whenever the controller's status line changes, so the
+        /// small tool windows can mirror it without owning any logic.</summary>
+        public event Action<string> StatusChanged;
+
+        /// <summary>Raised when the authorized catalog was reloaded.</summary>
+        public event Action CatalogChanged;
 
         // Lifter (server-only) packages are wiped from this PC when the template
         // session ends, so the paid PowerCopy never stays on the customer's disk.
@@ -72,6 +81,27 @@ namespace ProfessionalPowerCopyCatalogModern
             _deviceId = DeviceIdentity.GetOrCreate();
             _heartbeatTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(5) };
             _heartbeatTimer.Tick += async (_, __) => await RenewLeaseSilentlyAsync();
+
+            // The product is the toolbar: this window is only the engine
+            // (licence, catalog, packages, CATIA). It is never shown.
+            ShowInTaskbar = false;
+            Loaded += delegate
+            {
+                Hide();
+                ShowPwToolbar();
+            };
+
+            // Mirror the status line to the tool windows.
+            var statusProperty = System.ComponentModel.DependencyPropertyDescriptor.FromProperty(
+                TextBlock.TextProperty, typeof(TextBlock));
+            if (statusProperty != null)
+            {
+                statusProperty.AddValueChanged(StatusText, delegate
+                {
+                    Action<string> handler = StatusChanged;
+                    if (handler != null) handler(StatusText.Text);
+                });
+            }
 
             LoadLocalTemplateConfiguration();
             LoadLifterOverrides();
@@ -477,7 +507,6 @@ namespace ProfessionalPowerCopyCatalogModern
             CloseSourceDocument();
             await ReleaseLeaseSilentlyAsync();
             _isSignedIn = false;
-            ClosePwToolbar();
             _api.LogoutLocal();
             CatalogItems.Clear();
             Results.Clear();
@@ -746,14 +775,125 @@ namespace ProfessionalPowerCopyCatalogModern
         }
 
         // ================================================================
+        // Public controller API used by the toolbar and the tool windows
+        // ================================================================
+
+        public bool IsSignedIn { get { return _isSignedIn; } }
+
+        public bool CatiaConnected { get { return _catia != null; } }
+
+        public string AccountName
+        {
+            get { return string.IsNullOrWhiteSpace(AboutUserNameText.Text) ? "Licensed user" : AboutUserNameText.Text; }
+        }
+
+        public string LicenseSummary
+        {
+            get { return string.IsNullOrWhiteSpace(LicenseTimeText.Text) ? "Licence status unknown" : LicenseTimeText.Text; }
+        }
+
+        public string RememberedEmail { get { return LoginEmailBox.Text; } }
+
+        public string OverallStatus { get { return OverallStatusText.Text; } }
+
+        public string DestinationName
+        {
+            get { return _destination == null ? "No destination CATPart" : GetDocumentName(_destination); }
+        }
+
+        public bool IsLifter(CatalogItem item) { return IsLifterTemplate(item); }
+
+        public string DescribePackage(CatalogItem item)
+        {
+            if (item == null) return string.Empty;
+            return _packageManager.IsCached(item)
+                ? "Package v" + item.Version + " is ready on this PC."
+                : "Package v" + item.Version + " will be downloaded securely on first use.";
+        }
+
+        /// <summary>Activation from the small licence panel. Returns null on
+        /// success, or the message to display.</summary>
+        public async Task<string> SignInAsync(string email, string password, bool remember)
+        {
+            LoginEmailBox.Text = email;
+            LoginPasswordBox.Password = password;
+            RememberMeCheck.IsChecked = remember;
+            LoginStatusText.Text = string.Empty;
+
+            await DoLoginAsync();
+
+            if (_isSignedIn)
+            {
+                Action handler = CatalogChanged;
+                if (handler != null) handler();
+                return null;
+            }
+            return string.IsNullOrWhiteSpace(LoginStatusText.Text)
+                ? "The licence could not be verified."
+                : LoginStatusText.Text;
+        }
+
+        public async Task RefreshLicenseAsync()
+        {
+            await RefreshLicenseDisplayAsync();
+        }
+
+        public async Task RefreshCatalogAsync()
+        {
+            if (!_isSignedIn) return;
+            await LoadAuthorizedCatalogAsync();
+            Action handler = CatalogChanged;
+            if (handler != null) handler();
+        }
+
+        public void SignOut()
+        {
+            SignOutButton_OnClick(this, null);
+            Action handler = CatalogChanged;
+            if (handler != null) handler();
+        }
+
+        public void SelectItem(CatalogItem item)
+        {
+            CatalogList.SelectedItem = item;
+        }
+
+        public void UseInCatia(CatalogItem item)
+        {
+            SelectItem(item);
+            UseInCatiaButton_OnClick(this, null);
+        }
+
+        public void RunCheck()
+        {
+            RunCheckButton_OnClick(this, null);
+        }
+
+        // ================================================================
         // PW-User floating toolbar (the four product commands, docked to
         // the CATIA window - no CATIA customization needed on the client)
         // ================================================================
 
+        /// <summary>Closes the whole product from the toolbar: the panels are
+        /// allowed to close (they normally only hide), then the app exits.</summary>
+        public void ShutdownProduct()
+        {
+            try
+            {
+                if (_licenseWindow != null) { _licenseWindow.ForceClose = true; _licenseWindow.Close(); }
+                if (_libraryWindow != null) { _libraryWindow.ForceClose = true; _libraryWindow.Close(); }
+                CheckerWindow checker = CheckerWindow.Current;
+                if (checker != null) { checker.ForceClose = true; checker.Close(); }
+                _licenseWindow = null;
+                _libraryWindow = null;
+                ClosePwToolbar();
+            }
+            catch { }
+            try { Application.Current.Shutdown(); } catch { }
+        }
+
         protected override void OnClosed(EventArgs e)
         {
-            // The floating toolbar is a second window: without this the WPF
-            // application would stay alive after the main window is closed.
             ClosePwToolbar();
             base.OnClosed(e);
         }
@@ -768,7 +908,8 @@ namespace ProfessionalPowerCopyCatalogModern
                         PwToolbarLicense,
                         PwToolbarStroke,
                         PwToolbarLibrary,
-                        PwToolbarChecker);
+                        PwToolbarChecker,
+                        ShutdownProduct);
                     _pwToolbar.Closed += delegate { _pwToolbar = null; };
                 }
                 _pwToolbar.Show();
@@ -792,22 +933,43 @@ namespace ProfessionalPowerCopyCatalogModern
             catch { }
         }
 
-        /// <summary>Toolbar 1/4 - licence: brings up the account panel and
-        /// refreshes the seat information from the server.</summary>
-        private async void PwToolbarLicense()
+        /// <summary>Toolbar 1/4 - licence: the small activation panel.</summary>
+        private void PwToolbarLicense()
         {
-            Show();
-            WindowState = WindowState.Normal;
-            Activate();
-            AboutNavButton_OnClick(this, null);
-            try { await RefreshLicenseDisplayAsync(); }
-            catch (Exception ex) { StatusText.Text = FriendlyApiError(ex.Message); }
+            if (_licenseWindow == null) _licenseWindow = new LicenseWindow(this);
+            _licenseWindow.Refresh();
+            PlaceNextToToolbar(_licenseWindow, 430);
+            _licenseWindow.Show();
+            _licenseWindow.Activate();
+        }
+
+        /// <summary>Puts a tool panel next to the toolbar, inside the screen.</summary>
+        private void PlaceNextToToolbar(Window window, double assumedHeight)
+        {
+            try
+            {
+                if (window.IsVisible) return;    // keep the position the user chose
+                double right = _pwToolbar != null && _pwToolbar.IsVisible
+                    ? _pwToolbar.Left
+                    : SystemParameters.WorkArea.Right - 80;
+                window.Left = Math.Max(SystemParameters.WorkArea.Left + 10, right - window.Width - 12);
+                window.Top = Math.Max(SystemParameters.WorkArea.Top + 10,
+                    Math.Min(SystemParameters.WorkArea.Bottom - assumedHeight - 10,
+                             (_pwToolbar != null ? _pwToolbar.Top : 120)));
+            }
+            catch { }
         }
 
         /// <summary>Toolbar 2/4 - stroke: runs the STROKE_Distance script
         /// inside CATIA on the active CATPart.</summary>
         private void PwToolbarStroke()
         {
+            if (!_isSignedIn)
+            {
+                ToastWindow.Show("LICENCE REQUIRED", "Activate your licence first.", true);
+                PwToolbarLicense();
+                return;
+            }
             if (!EnsureCatiaConnection())
                 throw new InvalidOperationException("CATIA is not running.");
             if (!(_catia.ActiveDocument is MECMOD.PartDocument))
@@ -837,28 +999,35 @@ namespace ProfessionalPowerCopyCatalogModern
                 message = result;
 
             StatusText.Text = message;
-            MessageBox.Show(message, "PW-User - Stroke", MessageBoxButton.OK, MessageBoxImage.Information);
+            // "Stroke only runs": no window, just a self-closing notification.
+            ToastWindow.Show("STROKE TOOL", message);
         }
 
-        /// <summary>Toolbar 3/4 - library: the licensed catalog.</summary>
+        /// <summary>Toolbar 3/4 - library: the premium catalog window.</summary>
         private void PwToolbarLibrary()
         {
-            Show();
-            WindowState = WindowState.Normal;
-            Activate();
-            ShowLibraryWorkspace();
+            if (!_isSignedIn)
+            {
+                ToastWindow.Show("LICENCE REQUIRED", "Activate your licence first.", true);
+                PwToolbarLicense();
+                return;
+            }
+            if (_libraryWindow == null) _libraryWindow = new LibraryWindow(this);
+            _libraryWindow.Refresh();
+            _libraryWindow.Show();
+            _libraryWindow.Activate();
         }
 
-        /// <summary>Toolbar 4/4 - checker: the integrated feasibility check
-        /// of the selected template against the destination CATPart.</summary>
+        /// <summary>Toolbar 4/4 - checker: compact result panel.</summary>
         private void PwToolbarChecker()
         {
-            Show();
-            WindowState = WindowState.Normal;
-            Activate();
-            if (SelectedItem == null)
-                throw new InvalidOperationException("Select a template in the library first.");
-            RunCheckButton_OnClick(this, null);
+            if (!_isSignedIn)
+            {
+                ToastWindow.Show("LICENCE REQUIRED", "Activate your licence first.", true);
+                PwToolbarLicense();
+                return;
+            }
+            CheckerWindow.ShowFor(this);
         }
 
         private static void ApplyPreparedPackage(CatalogItem item, PreparedPackage package)
