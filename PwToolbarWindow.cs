@@ -45,14 +45,17 @@ namespace ProfessionalPowerCopyCatalogModern
         private readonly Action _onStroke;
         private readonly Action _onLibrary;
         private readonly Action _onChecker;
+        private readonly Action _onParameters;
         private readonly Action _onQuit;
         private bool _userMoved;
 
-        public PwToolbarWindow(Action onLicense, Action onStroke, Action onLibrary, Action onChecker, Action onQuit)
+        public PwToolbarWindow(Action onLicense, Action onStroke, Action onLibrary,
+                               Action onParameters, Action onChecker, Action onQuit)
         {
             _onLicense = onLicense;
             _onStroke = onStroke;
             _onLibrary = onLibrary;
+            _onParameters = onParameters;
             _onChecker = onChecker;
             _onQuit = onQuit;
 
@@ -119,6 +122,9 @@ namespace ProfessionalPowerCopyCatalogModern
                 new SolidColorBrush(Color.FromRgb(0x16, 0xA7, 0xB4)), _onStroke));
             stack.Children.Add(MakeButton("\uE8F1", "PowerCopy library - browse and use the licensed templates",
                 new SolidColorBrush(Color.FromRgb(0x25, 0x63, 0xEB)), _onLibrary));
+            stack.Children.Add(MakeButton("\uE713", "Lifter parameters - reopen the CATIA dashboard on the active CATPart "
+                + "(parameters, Draft, Boolean Remove) without using the library again",
+                new SolidColorBrush(Color.FromRgb(0x7C, 0x3A, 0xED)), _onParameters));
             stack.Children.Add(MakeButton("\uE9D5", "Checker - feasibility and clash check against the main CATPart",
                 new SolidColorBrush(Color.FromRgb(0xC0, 0x39, 0x2B)), _onChecker));
 

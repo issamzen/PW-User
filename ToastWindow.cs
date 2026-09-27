@@ -14,8 +14,10 @@ namespace ProfessionalPowerCopyCatalogModern
     internal sealed class ToastWindow : Window
     {
         private readonly DispatcherTimer _timer;
-
-        private ToastWindow(string title, string message, bool error)
+        private TextBlock _titleBlock;
+        private TextBlock _messageBlock;
+        private Border _shell;
+        private ToastWindow(string title, string message, bool error, bool sticky = false)
         {
             WindowStyle = WindowStyle.None;
             ResizeMode = ResizeMode.NoResize;
@@ -43,8 +45,9 @@ namespace ProfessionalPowerCopyCatalogModern
                 }
             };
 
+            _shell = shell;
             var stack = new StackPanel();
-            stack.Children.Add(new TextBlock
+            _titleBlock = new TextBlock
             {
                 Text = title,
                 Foreground = new SolidColorBrush(error
@@ -52,15 +55,17 @@ namespace ProfessionalPowerCopyCatalogModern
                     : Color.FromRgb(0x16, 0xA7, 0xB4)),
                 FontSize = 10,
                 FontWeight = FontWeights.Bold
-            });
-            stack.Children.Add(new TextBlock
+            };
+            stack.Children.Add(_titleBlock);
+            _messageBlock = new TextBlock
             {
                 Text = message,
                 Foreground = Brushes.White,
                 FontSize = 12,
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(0, 4, 0, 0)
-            });
+            };
+            stack.Children.Add(_messageBlock);
             shell.Child = stack;
             Content = shell;
 
@@ -72,7 +77,52 @@ namespace ProfessionalPowerCopyCatalogModern
                 _timer.Stop();
                 try { Close(); } catch { }
             };
-            _timer.Start();
+            if (!sticky) _timer.Start();
+        }
+
+        /// <summary>A toast that stays on screen until Complete() is called -
+        /// used by the commands that take a while inside CATIA.</summary>
+        public static ToastWindow ShowProgress(string title, string message)
+        {
+            try
+            {
+                var toast = new ToastWindow(title, message, false, true);
+                toast.Show();
+                toast.Place();
+                return toast;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>Turns a progress toast into its final message, then fades out.</summary>
+        public void Complete(string title, string message, bool error = false)
+        {
+            try
+            {
+                _titleBlock.Text = title;
+                _titleBlock.Foreground = new SolidColorBrush(error
+                    ? Color.FromRgb(0xFE, 0xCA, 0xCA)
+                    : Color.FromRgb(0x16, 0xA7, 0xB4));
+                _messageBlock.Text = message;
+                _shell.Background = new SolidColorBrush(error
+                    ? Color.FromRgb(0x7F, 0x1D, 0x1D)
+                    : Color.FromRgb(0x0F, 0x22, 0x2E));
+                Place();
+                _timer.Interval = TimeSpan.FromSeconds(error ? 8 : 5);
+                _timer.Start();
+            }
+            catch { }
+        }
+
+        private void Place()
+        {
+            try
+            {
+                UpdateLayout();
+                Left = SystemParameters.WorkArea.Right - ActualWidth - 84;
+                Top = SystemParameters.WorkArea.Bottom - ActualHeight - 40;
+            }
+            catch { }
         }
 
         public static void Show(string title, string message, bool error = false)
@@ -81,8 +131,7 @@ namespace ProfessionalPowerCopyCatalogModern
             {
                 var toast = new ToastWindow(title, message, error);
                 toast.Show();
-                toast.Left = SystemParameters.WorkArea.Right - toast.ActualWidth - 84;
-                toast.Top = SystemParameters.WorkArea.Bottom - toast.ActualHeight - 40;
+                toast.Place();
             }
             catch
             {

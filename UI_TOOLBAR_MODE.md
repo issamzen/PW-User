@@ -8,10 +8,11 @@ and one purpose-built panel per tool.
    ┌────┐
    │ PW │   ← drag handle
    ├────┤
-   │ 🔑 │   Licence  → small activation panel (e-mail + key)
-   │ 📏 │   Stroke   → runs immediately, no window (toast with the result)
-   │ 📚 │   Library  → premium PowerCopy window
-   │ ✔  │   Checker  → compact clash / feasibility panel
+   │ 🔑 │   Licence    → small activation panel (e-mail + key)
+   │ 📏 │   Stroke     → runs immediately, no window (progress + result toast)
+   │ 📚 │   Library    → premium PowerCopy window
+   │ ⚙  │   Parameters → reopens the CATIA lifter dashboard on the active part
+   │ ✔  │   Checker    → compact clash / feasibility panel
    ├────┤
    │ ⏻  │   Quit PW-User (the only way to close the tools)
    └────┘
@@ -43,7 +44,17 @@ too, in red.
 The premium window: gradient rail with live search and auto-built category
 chips, card list of the licensed templates, and a hero detail panel with
 **Use in CATIA** / **Run feasibility check**, the lifter-workflow badge, the
-package state and a live status strip fed by the engine.
+package state and a live status strip fed by the engine. Clicking **Use in
+CATIA** hides the library and brings CATIA to the front, so the user lands
+directly on the CATIA-side dashboard.
+
+**4 · Lifter parameters** — no window of our own
+Runs the CATIA-side Lifter Studio dashboard again on the CATPart that is
+already open: parameters, Draft, **Boolean Remove** and the PowerCopy
+hand-off. This is the tool for the second (third, fourth...) remove operation
+after a PowerCopy was inserted - **no library, no new licence seat, no new
+download**, because the paid content is already in the part. It is refused
+while a dashboard is already running, and it focuses CATIA on start.
 
 **4 · Checker** — `CheckerWindow.xaml`
 Compact panel: template + destination CATPart, a colour-coded verdict badge

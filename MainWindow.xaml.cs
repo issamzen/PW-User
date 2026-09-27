@@ -39,6 +39,7 @@ namespace ProfessionalPowerCopyCatalogModern
         private LifterStudioWindow _lifterStudio;
         private CatalogItem _lifterSessionItem;
         private PwToolbarWindow _pwToolbar;
+        private bool _lifterStudioRunning;
         private LicenseWindow _licenseWindow;
         private LibraryWindow _libraryWindow;
 
@@ -733,9 +734,14 @@ namespace ProfessionalPowerCopyCatalogModern
                     _lifterSessionItem = SelectedItem;
                     StatusText.Text = "Lifter Studio is running inside CATIA — use the dashboard on the CATIA side…";
                     OverallStatusText.Text = "AWAITING CATIA";
+                    NativeWindows.FocusCatia();
 
-                    string macroResult = await RunLifterStudioScriptAsync();
+                    _lifterStudioRunning = true;
+                    string macroResult;
+                    try { macroResult = await RunLifterStudioScriptAsync(); }
+                    finally { _lifterStudioRunning = false; }
                     ApplyLifterStudioResult(macroResult);
+                    ToastWindow.Show("LIFTER STUDIO", StatusText.Text);
 
                     RunCheckButton.IsEnabled = true;
                     return;
@@ -861,6 +867,9 @@ namespace ProfessionalPowerCopyCatalogModern
         public void UseInCatia(CatalogItem item)
         {
             SelectItem(item);
+            // The library steps out of the way: the work continues in CATIA.
+            if (_libraryWindow != null) _libraryWindow.Hide();
+            NativeWindows.FocusCatia();
             UseInCatiaButton_OnClick(this, null);
         }
 
@@ -908,6 +917,7 @@ namespace ProfessionalPowerCopyCatalogModern
                         PwToolbarLicense,
                         PwToolbarStroke,
                         PwToolbarLibrary,
+                        PwToolbarParameters,
                         PwToolbarChecker,
                         ShutdownProduct);
                     _pwToolbar.Closed += delegate { _pwToolbar = null; };
@@ -962,7 +972,7 @@ namespace ProfessionalPowerCopyCatalogModern
 
         /// <summary>Toolbar 2/4 - stroke: runs the STROKE_Distance script
         /// inside CATIA on the active CATPart.</summary>
-        private void PwToolbarStroke()
+        private async void PwToolbarStroke()
         {
             if (!_isSignedIn)
             {
@@ -970,37 +980,103 @@ namespace ProfessionalPowerCopyCatalogModern
                 PwToolbarLicense();
                 return;
             }
-            if (!EnsureCatiaConnection())
-                throw new InvalidOperationException("CATIA is not running.");
-            if (!(_catia.ActiveDocument is MECMOD.PartDocument))
-                throw new InvalidOperationException(
-                    "Open (or activate) the destination CATPart in CATIA first.");
 
-            string scriptPath = LifterEngine.WriteStrokeSetupScript();
-            object raw = _catia.SystemService.ExecuteScript(
-                Path.GetDirectoryName(scriptPath),
-                INFITF.CatScriptLibraryType.catScriptLibraryTypeDirectory,
-                Path.GetFileName(scriptPath),
-                "CATMain",
-                new object[0]);
-            string result = raw == null ? string.Empty : raw.ToString().Trim();
+            ToastWindow progress = null;
+            try
+            {
+                if (!EnsureCatiaConnection())
+                    throw new InvalidOperationException("CATIA is not running.");
+                if (!(_catia.ActiveDocument is MECMOD.PartDocument))
+                    throw new InvalidOperationException(
+                        "Open (or activate) the destination CATPart in CATIA first.");
 
-            if (result.StartsWith("ERROR:", StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException(result.Substring(6).Trim());
+                // The bounding box measurement takes a few seconds: tell the
+                // user something is happening, without blocking the toolbar.
+                progress = ToastWindow.ShowProgress("STROKE TOOL",
+                    "Measuring the main body in CATIA…");
 
-            string message;
-            if (result.StartsWith("EXISTS:", StringComparison.OrdinalIgnoreCase))
-                message = "STROKE_Distance = " + result.Substring(7) + " mm (already on the CATPart).";
-            else if (result.StartsWith("CREATED:", StringComparison.OrdinalIgnoreCase))
-                message = "STROKE_Distance = " + result.Substring(8) + " mm created.";
-            else if (string.Equals(result, "CANCELLED", StringComparison.OrdinalIgnoreCase))
-                message = "Stroke setup cancelled.";
-            else
-                message = result;
+                string scriptPath = LifterEngine.WriteStrokeSetupScript();
+                string result = await RunCatiaScriptAsync(scriptPath, "CATMain", false);
 
-            StatusText.Text = message;
-            // "Stroke only runs": no window, just a self-closing notification.
-            ToastWindow.Show("STROKE TOOL", message);
+                if (result.StartsWith("ERROR:", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException(result.Substring(6).Trim());
+
+                string message;
+                if (result.StartsWith("EXISTS:", StringComparison.OrdinalIgnoreCase))
+                    message = "STROKE_Distance = " + result.Substring(7) + " mm (already on the CATPart).";
+                else if (result.StartsWith("CREATED:", StringComparison.OrdinalIgnoreCase))
+                    message = "STROKE_Distance = " + result.Substring(8) + " mm created.";
+                else if (string.Equals(result, "CANCELLED", StringComparison.OrdinalIgnoreCase))
+                    message = "Stroke setup cancelled.";
+                else
+                    message = result;
+
+                StatusText.Text = message;
+                if (progress != null) progress.Complete("STROKE TOOL", message);
+                else ToastWindow.Show("STROKE TOOL", message);
+            }
+            catch (Exception ex)
+            {
+                string message = FriendlyApiError(ex.Message);
+                StatusText.Text = message;
+                if (progress != null) progress.Complete("STROKE TOOL", message, true);
+                else ToastWindow.Show("STROKE TOOL", message, true);
+            }
+        }
+
+        /// <summary>Toolbar 4/5 - lifter parameters: reopens the CATIA-side
+        /// dashboard (parameters, Draft, Boolean Remove, PowerCopy hand-off) on
+        /// the CATPart that is already open, WITHOUT going through the library
+        /// again. This is the tool needed for a second Boolean Remove after a
+        /// PowerCopy has been inserted: no new seat, no new download, the paid
+        /// content is already in the part.</summary>
+        private async void PwToolbarParameters()
+        {
+            if (!_isSignedIn)
+            {
+                ToastWindow.Show("LICENCE REQUIRED", "Activate your licence first.", true);
+                PwToolbarLicense();
+                return;
+            }
+
+            if (_lifterStudioRunning)
+            {
+                ToastWindow.Show("LIFTER PARAMETERS",
+                    "The CATIA dashboard is already open - finish or close it first.", true);
+                NativeWindows.FocusCatia();
+                return;
+            }
+
+            try
+            {
+                if (!EnsureCatiaConnection())
+                    throw new InvalidOperationException("CATIA is not running.");
+                if (!(_catia.ActiveDocument is MECMOD.PartDocument))
+                    throw new InvalidOperationException(
+                        "Open (or activate) the CATPart that holds the lifter instances in CATIA first.");
+
+                _destination = (MECMOD.PartDocument)_catia.ActiveDocument;
+                _lifterStudioRunning = true;
+
+                if (_libraryWindow != null) _libraryWindow.Hide();
+                StatusText.Text = "Lifter parameters dashboard is running inside CATIA…";
+                ToastWindow.Show("LIFTER PARAMETERS", "The dashboard is opening in CATIA…");
+                NativeWindows.FocusCatia();
+
+                string result = await RunLifterStudioScriptAsync();
+                ApplyLifterStudioResult(result);
+                ToastWindow.Show("LIFTER PARAMETERS", StatusText.Text);
+            }
+            catch (Exception ex)
+            {
+                string message = FriendlyApiError(ex.Message);
+                StatusText.Text = message;
+                ToastWindow.Show("LIFTER PARAMETERS", message, true);
+            }
+            finally
+            {
+                _lifterStudioRunning = false;
+            }
         }
 
         /// <summary>Toolbar 3/4 - library: the premium catalog window.</summary>
@@ -1139,6 +1215,14 @@ namespace ProfessionalPowerCopyCatalogModern
         private Task<string> RunLifterStudioScriptAsync()
         {
             string scriptPath = LifterStudioScript.Write();
+            return RunCatiaScriptAsync(scriptPath, "CATMain", true);
+        }
+
+        /// <summary>Executes a CATScript inside CATIA on a dedicated STA thread,
+        /// so a macro that keeps CATIA busy (dashboards, measurements) never
+        /// freezes the PW toolbar and its panels.</summary>
+        private Task<string> RunCatiaScriptAsync(string scriptPath, string function, bool deleteAfterwards)
+        {
             string directory = Path.GetDirectoryName(scriptPath);
             string fileName = Path.GetFileName(scriptPath);
 
@@ -1154,7 +1238,7 @@ namespace ProfessionalPowerCopyCatalogModern
                         directory,
                         INFITF.CatScriptLibraryType.catScriptLibraryTypeDirectory,
                         fileName,
-                        "CATMain",
+                        function,
                         new object[0]);
                     completion.SetResult(rawResult == null ? string.Empty : rawResult.ToString().Trim());
                 }
@@ -1165,8 +1249,11 @@ namespace ProfessionalPowerCopyCatalogModern
                 finally
                 {
                     // The macro never stays on the customer's disk in clear text.
-                    try { if (File.Exists(scriptPath)) File.Delete(scriptPath); }
-                    catch { }
+                    if (deleteAfterwards)
+                    {
+                        try { if (File.Exists(scriptPath)) File.Delete(scriptPath); }
+                        catch { }
+                    }
                 }
             });
             worker.SetApartmentState(ApartmentState.STA);
