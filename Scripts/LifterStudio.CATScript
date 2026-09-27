@@ -342,18 +342,37 @@ End Function
 '------------------------------------------------------------------
 Function GetFormulaFor(relations, drivenParameter)
     On Error Resume Next
-    Dim i, rel
-    On Error Resume Next
-    For i = 1 To relations.count
-        Set rel = relations.item(i)
-        If TypeName(rel) = "Formula" Then
-            If rel.LeftPart Is drivenParameter Then
-                Set GetFormulaFor = rel
-                Exit Function
+    Dim i, rel, leftName, wantedName
+    Set GetFormulaFor = Nothing
+    If relations Is Nothing Or drivenParameter Is Nothing Then Exit Function
+
+    wantedName = CStr(drivenParameter.Name)
+    For i = 1 To relations.Count
+        Set rel = Nothing
+        Set rel = relations.Item(i)
+        If Not rel Is Nothing Then
+            If TypeName(rel) = "Formula" Then
+                If rel.LeftPart Is drivenParameter Then
+                    Set GetFormulaFor = rel
+                    Err.Clear
+                    Exit Function
+                End If
+                ' CATIA hands out a fresh proxy for the same parameter, so
+                ' the driven name is compared as well.
+                leftName = ""
+                leftName = CStr(rel.LeftPart.Name)
+                Err.Clear
+                If Len(leftName) > 0 Then
+                    If StrComp(leftName, wantedName, vbTextCompare) = 0 Then
+                        Set GetFormulaFor = rel
+                        Err.Clear
+                        Exit Function
+                    End If
+                End If
             End If
         End If
     Next
-    Set GetFormulaFor = Nothing
+    Err.Clear
 End Function
 
 
@@ -1714,13 +1733,13 @@ Sub UpdateValues(part, data, rsp, instanceIndex)
 
     Err.Clear
     CATIA.RefreshDisplay = False
-    problem = SetDimension(a, ReadKey(data, p1), "mm")
-    If Len(problem) = 0 Then problem = SetDimension(b, ReadKey(data, p2), "deg")
-    If Len(problem) = 0 Then problem = SetDimension(c, ReadKey(data, P3), "deg")
+    problem = SetDimension(part, a, ReadKey(data, p1), "mm")
+    If Len(problem) = 0 Then problem = SetDimension(part, b, ReadKey(data, p2), "deg")
+    If Len(problem) = 0 Then problem = SetDimension(part, c, ReadKey(data, P3), "deg")
     Dim wantedBool
     wantedBool = (LCase(Trim(ReadKey(data, P4))) = "true")
     If Len(problem) = 0 Then problem = SetBooleanValue(part, d, ReadKey(data, P4))
-    If Len(problem) = 0 Then problem = SetDimension(e, ReadKey(data, P5), "mm")
+    If Len(problem) = 0 Then problem = SetDimension(part, e, ReadKey(data, P5), "mm")
 
     If Len(problem) = 0 Then
         part.Update
@@ -1757,13 +1776,26 @@ End Sub
 ' Both setters return "" on success, or the reason of the failure -
 ' VBScript has no On Error GoTo, so the caller checks the text.
 '------------------------------------------------------------------
-Function SetDimension(parameter, rawValue, unitName)
+Function SetDimension(part, parameter, rawValue, unitName)
     On Error Resume Next
+    Dim blocked
     SetDimension = ""
+    If parameter Is Nothing Then
+        SetDimension = "A dashboard parameter was not found."
+        Exit Function
+    End If
     If Len(Trim(rawValue)) = 0 Then
         SetDimension = "A dashboard value is empty."
         Exit Function
     End If
+
+    ' A dimension can be formula driven too.
+    blocked = TakeControlOfParameter(part, parameter, LeafName(CStr(parameter.Name)))
+    If Len(blocked) > 0 Then
+        SetDimension = blocked
+        Exit Function
+    End If
+
     Err.Clear
     parameter.ValuateFromString Replace(Trim(rawValue), ",", ".") & unitName
     If Err.Number <> 0 Then
@@ -1800,16 +1832,13 @@ Function SetBooleanValue(part, parameter, rawValue)
 
     If BoolValueOf(parameter) = wanted Then Exit Function      ' nothing to do
 
-    ' A formula on the parameter cannot be overridden by a value.
-    Set relation = Nothing
-    Err.Clear
-    Set relation = GetFormulaFor(part.Relations, parameter)
-    Err.Clear
-    If Not relation Is Nothing Then
-        SetBooleanValue = P4 & " is driven by the formula """ & CStr(relation.Name) & _
-                          """ - delete or deactivate that formula to steer it from the dashboard."
+    ' A formula driving the parameter always wins: offer to switch it off.
+    message = TakeControlOfParameter(part, parameter, P4)
+    If Len(message) > 0 Then
+        SetBooleanValue = message
         Exit Function
     End If
+    message = ""
 
     ' 1) the normal way
     Err.Clear
@@ -1838,6 +1867,58 @@ Function SetBooleanValue(part, parameter, rawValue)
     SetBooleanValue = P4 & " could not be set to " & text & _
                       " (CATIA keeps " & LCase(CStr(BoolValueOf(parameter))) & ")."
     If Len(message) > 0 Then SetBooleanValue = SetBooleanValue & " " & message
+End Function
+
+'------------------------------------------------------------------
+' A parameter driven by a formula cannot be edited: CATIA recomputes
+' it on the next update. The user is asked once per formula whether
+' the dashboard may deactivate it (the formula stays in the part and
+' can be switched back on in CATIA at any time).
+' Returns "" when the parameter is writable, otherwise the reason.
+'------------------------------------------------------------------
+Function TakeControlOfParameter(part, parameter, label)
+    On Error Resume Next
+    Dim relation, relationName, answer, message
+
+    TakeControlOfParameter = ""
+    If part Is Nothing Or parameter Is Nothing Then Exit Function
+
+    Set relation = Nothing
+    Err.Clear
+    Set relation = GetFormulaFor(part.Relations, parameter)
+    Err.Clear
+    If relation Is Nothing Then Exit Function
+
+    relationName = "a formula"
+    relationName = CStr(relation.Name)
+    Err.Clear
+
+    answer = MsgBox(label & " is driven by the formula """ & relationName & """." & vbCrLf & vbCrLf & _
+                    "Deactivate that formula so the dashboard can drive the value?" & vbCrLf & _
+                    "The formula stays in the part and can be reactivated in CATIA " & _
+                    "(right-click the relation > Deactivate/Activate).", _
+                    vbYesNo + vbQuestion, APP_TITLE)
+
+    If answer <> vbYes Then
+        TakeControlOfParameter = label & " stays driven by the formula """ & relationName & """."
+        Exit Function
+    End If
+
+    Err.Clear
+    relation.Deactivate
+    If Err.Number <> 0 Then
+        message = Err.Description
+        Err.Clear
+        ' Older releases expose Activate/Deactivate only on the relation
+        ' collection: try the documented alternative before giving up.
+        part.Relations.Item(relationName).Deactivate
+        If Err.Number <> 0 Then
+            Err.Clear
+            TakeControlOfParameter = "The formula """ & relationName & """ could not be deactivated. " & message
+            Exit Function
+        End If
+    End If
+    Err.Clear
 End Function
 
 '------------------------------------------------------------------
@@ -2077,29 +2158,36 @@ Function InstanceCount(part)
     Err.Clear
 End Function
 
+'------------------------------------------------------------------
+' Strict lookup INSIDE one parameter set.
+' CATIA's DirectParameters.Item(name) resolves names loosely (it can
+' answer with an element that lives somewhere else, which made a set
+' named UNDERCUT_LENGTH look like it owned a parameter with the same
+' name). The leaf names are therefore compared explicitly.
+'------------------------------------------------------------------
 Function FindDirect(parameterSet, wantedName)
     On Error Resume Next
     Dim parameters, parameter, index
-    On Error Resume Next
+    Set FindDirect = Nothing
+    If parameterSet Is Nothing Then Exit Function
+
+    Set parameters = Nothing
     Set parameters = parameterSet.DirectParameters
     Err.Clear
     If parameters Is Nothing Then Exit Function
 
-    On Error Resume Next
-    Set parameter = parameters.item(wantedName)
-    Err.Clear
-    If Not parameter Is Nothing Then
-        Set FindDirect = parameter
-        Exit Function
-    End If
-
-    For index = 1 To parameters.count
-        Set parameter = parameters.item(index)
-        If StrComp(LeafName(CStr(parameter.name)), wantedName, vbTextCompare) = 0 Then
-            Set FindDirect = parameter
-            Exit Function
+    For index = 1 To parameters.Count
+        Set parameter = Nothing
+        Set parameter = parameters.Item(index)
+        If Not parameter Is Nothing Then
+            If StrComp(LeafName(CStr(parameter.Name)), wantedName, vbTextCompare) = 0 Then
+                Set FindDirect = parameter
+                Err.Clear
+                Exit Function
+            End If
         End If
     Next
+    Err.Clear
 End Function
 
 Function LeafName(fullName)
@@ -2744,6 +2832,10 @@ Function DumpParameterTree()
     f.WriteLine "Instances shown by the dashboard: " & CStr(InstanceCount(part))
 
     f.WriteLine ""
+    f.WriteLine "=========== RELATIONS ==========="
+    DumpRelations f, part
+
+    f.WriteLine ""
     f.WriteLine "=========== PARAMETER SEARCH ==========="
     DumpSearch f, part, p1
     DumpSearch f, part, p2
@@ -2784,6 +2876,39 @@ Sub DumpSet(f, parentSet, indent)
     If childSets Is Nothing Then Exit Sub
     For i = 1 To childSets.Count
         DumpSet f, childSets.Item(i), indent & "    "
+    Next
+    Err.Clear
+End Sub
+
+Sub DumpRelations(f, part)
+    On Error Resume Next
+    Dim relations, rel, i, leftName, state
+    Set relations = Nothing
+    Set relations = part.Relations
+    Err.Clear
+    If relations Is Nothing Then
+        f.WriteLine "(no relation)"
+        Exit Sub
+    End If
+
+    f.WriteLine "Relations: " & CStr(relations.Count)
+    For i = 1 To relations.Count
+        Set rel = Nothing
+        Set rel = relations.Item(i)
+        If Not rel Is Nothing Then
+            leftName = ""
+            leftName = CStr(rel.LeftPart.Name)
+            Err.Clear
+            state = ""
+            If rel.Activity Then
+                state = "active"
+            Else
+                state = "DEACTIVATED"
+            End If
+            Err.Clear
+            f.WriteLine "   " & CStr(i) & ") " & CStr(rel.Name) & "  [" & TypeName(rel) & ", " & state & "]" & _
+                        "  drives: " & leftName
+        End If
     Next
     Err.Clear
 End Sub
