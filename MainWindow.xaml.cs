@@ -104,8 +104,34 @@ namespace ProfessionalPowerCopyCatalogModern
             foreach (CatalogItem item in items)
             {
                 item.ThumbnailFullPath = ResolveThumbnail(item.Thumbnail);
-                _localTemplateConfig[item.Id] = item;
+                _localTemplateConfig[(item.Id ?? string.Empty).Trim()] = item;
             }
+        }
+
+        /// <summary>Matches a server catalog row to its local catalog.json entry:
+        /// by template Id (trimmed, case-insensitive), then by PowerCopy name.
+        /// Server rows sometimes use a different template Id than the local
+        /// development entry; the local entry is also what flags a template as
+        /// Workflow = "lifter" until the server catalog or the package manifest
+        /// carry the flag themselves.</summary>
+        private CatalogItem FindLocalConfig(CatalogItem serverItem)
+        {
+            if (serverItem == null) return null;
+
+            string id = (serverItem.Id ?? string.Empty).Trim();
+            if (id.Length > 0 && _localTemplateConfig.TryGetValue(id, out CatalogItem byId))
+                return byId;
+
+            string powerCopy = (serverItem.PowerCopyName ?? string.Empty).Trim();
+            if (powerCopy.Length > 0)
+            {
+                foreach (CatalogItem local in _localTemplateConfig.Values)
+                {
+                    if (string.Equals((local.PowerCopyName ?? string.Empty).Trim(), powerCopy, StringComparison.OrdinalIgnoreCase))
+                        return local;
+                }
+            }
+            return null;
         }
 
         private async Task LoadAuthorizedCatalogAsync()
@@ -116,7 +142,8 @@ namespace ProfessionalPowerCopyCatalogModern
 
             foreach (CatalogItem serverItem in response.Items ?? new List<CatalogItem>())
             {
-                if (_localTemplateConfig.TryGetValue(serverItem.Id, out CatalogItem local))
+                CatalogItem local = FindLocalConfig(serverItem);
+                if (local != null)
                 {
                     serverItem.CatPartPath = local.CatPartPath;
                     serverItem.CheckScriptDirectory = local.CheckScriptDirectory;
@@ -434,6 +461,12 @@ namespace ProfessionalPowerCopyCatalogModern
             SelectedItem = CatalogList.SelectedItem as CatalogItem;
             Results.Clear();
             OverallStatusText.Text = "NOT RUN";
+            // Visible proof that the lifter workflow flag resolved for this card —
+            // if this badge is missing on a lifter template, "Use in CATIA" would
+            // run the plain PowerCopy flow without the STROKE_Distance setup.
+            LifterWorkflowBadge.Visibility = IsLifterTemplate(SelectedItem)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
             StatusText.Text = SelectedItem == null
                 ? "Select a verified engineering template."
                 : "Ready. Use the template in CATIA, then run its integrated check.";
@@ -843,8 +876,8 @@ namespace ProfessionalPowerCopyCatalogModern
             {
                 _packageManager.Clear(SelectedItem);
                 if (IsLifterTemplate(SelectedItem)) _lifterSessionItem = null;
-                CatalogItem local;
-                if (_localTemplateConfig.TryGetValue(SelectedItem.Id, out local))
+                CatalogItem local = FindLocalConfig(SelectedItem);
+                if (local != null)
                 {
                     SelectedItem.CatPartPath = local.CatPartPath;
                     SelectedItem.CheckScriptDirectory = local.CheckScriptDirectory;

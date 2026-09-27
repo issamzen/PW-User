@@ -73,12 +73,23 @@ Use in CATIA  (template flagged Workflow = "lifter")
    }
    ```
    The manifest is inside the encrypted, SHA-256-verified package, so the flag
-   travels with the paid content.
+   travels with the paid content. **Recommended for production** — re-package
+   the lifter template with `"Workflow": "lifter"` in its manifest and upload
+   it to Hostinger; the app reads the flag right after the download.
 3. **Local `catalog.json`** (development / testing) — a `"Workflow": "lifter"`
-   field on the template entry, like the included `LF001` example. Note: for
-   lifter templates the local `CatPartPath` / `CheckScriptDirectory` are only a
-   development convenience — the Use in CATIA flow **never falls back** to them
-   when the server package is unavailable.
+   field on the template entry, like the included `LF001` example. The local
+   entry is matched to a server row **by template Id** (trimmed,
+   case-insensitive) or, if the server row uses a different Id, **by PowerCopy
+   name** — so make sure the `Id` or the `PowerCopyName` of your local entry
+   matches the server row you want to flag. Note: for lifter templates the
+   local `CatPartPath` / `CheckScriptDirectory` are only a development
+   convenience — the Use in CATIA flow **never falls back** to them when the
+   server package is unavailable.
+
+**How to verify the flag resolved:** select the lifter card in the dashboard —
+if it is flagged correctly, a blue **"Lifter workflow"** badge appears next to
+"Verified template" in the details pane. If the badge is missing, "Use in
+CATIA" will run the plain PowerCopy flow (no setup panel, no Lifter Studio).
 
 The `Lifters` category chip was added to the catalog pane, and the example
 `LF001` entry uses `Category: "Lifters"`.
@@ -185,6 +196,22 @@ errors can only come from leftover old files.
 **Duplicate class or ambiguous name after the migration** — a leftover
 `Lifter*.xaml` file is auto-included from disk by the SDK-style project.
 Delete it from the folder (see migration steps).
+
+**"Use in CATIA" opens the PowerCopy directly — no STROKE_Distance setup
+panel, no Lifter Studio window** — the card is **not flagged as a lifter**
+(`Workflow` did not resolve to `"lifter"`). STROKE_Distance is created on the
+**destination CATPart** (the one open in CATIA when you click), never inside
+the source template — but that only happens when the workflow flag resolves.
+Check the three flag sources (see *How a template is flagged as a lifter*):
+the server catalog row, the package manifest, and the local `catalog.json`
+entry (its `Id` — or `PowerCopyName` — must match the server row). The blue
+**"Lifter workflow"** badge on the card's details pane tells you immediately
+whether the flag resolved.
+
+**The setup panel appears but "Measurement failed"** — the destination
+CATPart's main body could not be measured (SPAWorkbench / bounding box). Use
+*Choose another body* to pick the main body manually, or check that the part
+contains a Body with geometry.
 
 After fixing: close Visual Studio, delete the `.vs`, `bin` and `obj` folders
 (stale markup-compile caches), reopen and **Rebuild**.
