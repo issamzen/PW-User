@@ -1,5 +1,22 @@
 [
   {
+    "Id": "LF001",
+    "Name": "Lifter Power Copy",
+    "Category": "Lifters",
+    "Version": "1.0.0",
+    "Description": "Parametric lifter insert with UNDERCUT_DEPTH / LIFTER_HEAD control, automatic STROKE_Distance link from the main body, Draft angle rule (rounded to the degree, capped at 15) and integrated Boolean Remove.",
+    "Inputs": "Insertion inputs per PowerCopy definition • main body for STROKE_Distance",
+    "Output": "LIFTER_HEAD instance with driven Draft parameter",
+    "Thumbnail": "Thumbnails\\DH001.png",
+    "CatPartPath": "C:\\Users\\ennad\\Downloads\\LIFTER_SOURCE_v001.CATPart",
+    "PowerCopyName": "PC_Lifter_v1.0",
+    "CheckScriptDirectory": "C:\\Users\\ennad\\Downloads\\scripts",
+    "CheckScriptFile": "LifterQuickCheck.CATScript",
+    "CheckFunction": "RunCheckForTool",
+    "Workflow": "lifter",
+    "IsFavorite": false
+  },
+  {
     "Id": "DH001",
     "Name": "Dog House Slider Check",
     "Category": "Dog Houses",

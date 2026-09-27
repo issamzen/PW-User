@@ -45,6 +45,7 @@ namespace ProfessionalPowerCopyCatalogModern
         public string CatPart { get; set; }
         public string CheckScript { get; set; }
         public string CheckFunction { get; set; }
+        public string Workflow { get; set; }
         public string CreatedUtc { get; set; }
     }
 
@@ -55,6 +56,7 @@ namespace ProfessionalPowerCopyCatalogModern
         public string ScriptPath { get; set; }
         public string CheckFunction { get; set; }
         public string PowerCopyName { get; set; }
+        public string Workflow { get; set; }
         public bool FromCache { get; set; }
         public double PreparationSeconds { get; set; }
         public PackageTransferResult Transfer { get; set; }
@@ -248,7 +250,8 @@ namespace ProfessionalPowerCopyCatalogModern
                 CatPartPath = catPartPath,
                 ScriptPath = scriptPath,
                 CheckFunction = manifest.CheckFunction,
-                PowerCopyName = manifest.PowerCopyName
+                PowerCopyName = manifest.PowerCopyName,
+                Workflow = string.IsNullOrWhiteSpace(manifest.Workflow) ? null : manifest.Workflow.Trim()
             };
         }
 

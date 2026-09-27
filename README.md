@@ -78,6 +78,16 @@ Select card
 
 `Run check` stays manual for the first version because CATIA's native interactive command is asynchronous. Automatic post-insertion detection can be added after the expected generated Body names are finalized.
 
+## Lifter templates
+
+Templates flagged with `Workflow = "lifter"` (server catalog metadata, package
+manifest, or local `catalog.json`) run the integrated **Lifter Studio** — the
+full catvba macro ported to the dashboard — from the same **Use in CATIA**
+button: one-time STROKE_Distance measurement, automatic STROKE link and Draft
+formula (max 15°), per-instance parameter control and Boolean Remove, plus
+server-only package handling (no local fallback, package wiped when the session
+ends). See **`LIFTER_INTEGRATION.md`**.
+
 ## Adding catalog entries
 
 1. Add/update the published metadata in the Hostinger MySQL `templates` table.

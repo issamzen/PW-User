@@ -10,6 +10,9 @@
     <RootNamespace>ProfessionalPowerCopyCatalogModern</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <!-- Required by the dynamic (late-bound) COM calls in LifterEngine.cs.
+         The SDK does NOT add it automatically for net48 targets. -->
+    <Reference Include="Microsoft.CSharp" />
     <Reference Include="System" />
     <Reference Include="System.Core" />
     <Reference Include="System.Drawing" />

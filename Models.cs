@@ -23,6 +23,13 @@ namespace ProfessionalPowerCopyCatalogModern
         public string CheckScriptFile { get; set; }
         public string CheckFunction { get; set; }
 
+        /// <summary>
+        /// Optional workflow marker. "lifter" enables the integrated Lifter Studio
+        /// (catvba port) when this template is used with "Use in CATIA". Sourced
+        /// from the server catalog metadata, the package manifest or catalog.json.
+        /// </summary>
+        public string Workflow { get; set; }
+
         public bool IsFavorite
         {
             get => _isFavorite;

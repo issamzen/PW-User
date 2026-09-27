@@ -145,6 +145,7 @@
                     <Button x:Name="ClipsCategoryButton" Content="Clips" Style="{StaticResource CategoryChip}" Click="CategoryButton_OnClick"/>
                     <Button x:Name="RibsCategoryButton" Content="Ribs" Style="{StaticResource CategoryChip}" Click="CategoryButton_OnClick"/>
                     <Button x:Name="BossesCategoryButton" Content="Bosses" Style="{StaticResource CategoryChip}" Click="CategoryButton_OnClick"/>
+                    <Button x:Name="LiftersCategoryButton" Content="Lifters" Style="{StaticResource CategoryChip}" Click="CategoryButton_OnClick"/>
                     <Button x:Name="FavoritesCategoryButton" Content="★ Favorites" Style="{StaticResource CategoryChip}" Click="CategoryButton_OnClick"/>
                 </WrapPanel>
 

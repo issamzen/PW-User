@@ -35,6 +35,14 @@ namespace ProfessionalPowerCopyCatalogModern
         private bool _isSignedIn;
         private string _activeLeaseToken;
         private string _organizationName;
+        private LifterStudioWindow _lifterStudio;
+        private CatalogItem _lifterSessionItem;
+
+        // Lifter (server-only) packages are wiped from this PC when the template
+        // session ends, so the paid PowerCopy never stays on the customer's disk.
+        // Set to false to keep the encrypted package cache between sessions.
+        // (static readonly, not const, so the check never produces dead code)
+        private static readonly bool WipeLifterPackageOnSessionEnd = true;
 
         public ObservableCollection<CatalogItem> CatalogItems { get; } = new ObservableCollection<CatalogItem>();
         public ObservableCollection<CheckRow> Results { get; } = new ObservableCollection<CheckRow>();
@@ -115,6 +123,7 @@ namespace ProfessionalPowerCopyCatalogModern
                     serverItem.CheckScriptFile = local.CheckScriptFile;
                     serverItem.CheckFunction = local.CheckFunction;
                     serverItem.IsFavorite = local.IsFavorite;
+                    if (!string.IsNullOrWhiteSpace(local.Workflow)) serverItem.Workflow = local.Workflow;
                 }
 
                 serverItem.ThumbnailFullPath = ResolveThumbnail(serverItem.Thumbnail);
@@ -345,6 +354,7 @@ namespace ProfessionalPowerCopyCatalogModern
             ClipsCategoryButton.Tag = null;
             RibsCategoryButton.Tag = null;
             BossesCategoryButton.Tag = null;
+            LiftersCategoryButton.Tag = null;
             FavoritesCategoryButton.Tag = null;
             selectedButton.Tag = "Selected";
 
@@ -394,6 +404,8 @@ namespace ProfessionalPowerCopyCatalogModern
 
         private async void SignOutButton_OnClick(object sender, RoutedEventArgs e)
         {
+            try { _lifterStudio?.Close(); } catch { }
+            _lifterStudio = null;
             CloseSourceDocument();
             await ReleaseLeaseSilentlyAsync();
             _isSignedIn = false;
@@ -470,6 +482,10 @@ namespace ProfessionalPowerCopyCatalogModern
                 if (_catia == null) ConnectToCatia();
                 if (_catia == null) return;
 
+                bool isLifter = IsLifterTemplate(SelectedItem);
+                if (isLifter && !(_catia.ActiveDocument is MECMOD.PartDocument))
+                    throw new InvalidOperationException("The active CATIA document must be a CATPart before using a lifter template.");
+
                 UseInCatiaButton.IsEnabled = false;
                 StatusText.Text = "Requesting a license seat…";
                 LeaseResponse lease = await _api.AcquireLeaseAsync(
@@ -530,7 +546,11 @@ namespace ProfessionalPowerCopyCatalogModern
                 }
                 catch (InvalidOperationException packageError)
                 {
-                    if (IsPackageUnavailableError(packageError.Message) && HasLocalRuntimeFiles(SelectedItem))
+                    // Lifter templates are server-only: no local development fallback,
+                    // the PowerCopy must always come from the licensed server package.
+                    if (!isLifter &&
+                        IsPackageUnavailableError(packageError.Message) &&
+                        HasLocalRuntimeFiles(SelectedItem))
                     {
                         PackageStatusText.Text = "Server package is not published yet; using local development files.";
                     }
@@ -539,6 +559,10 @@ namespace ProfessionalPowerCopyCatalogModern
                         throw;
                     }
                 }
+
+                // The package manifest may carry the workflow flag even when the
+                // server catalog / catalog.json do not: re-check after download.
+                isLifter = IsLifterTemplate(SelectedItem);
 
                 if (!HasLocalRuntimeFiles(SelectedItem))
                 {
@@ -550,6 +574,19 @@ namespace ProfessionalPowerCopyCatalogModern
 
                 StatusText.Text = "Package ready. Opening the CATIA template…";
                 _destination = (MECMOD.PartDocument)_catia.ActiveDocument;
+
+                if (isLifter)
+                {
+                    // Lifter workflow (catvba port): one-time STROKE_Distance
+                    // measurement on the destination part + STROKE link and Draft
+                    // formula fix-up, before the template document opens.
+                    _lifterSessionItem = SelectedItem;
+                    StatusText.Text = "Preparing lifter parameters (STROKE_Distance + Draft)…";
+                    LifterPreFlightResult preFlight = RunLifterPreFlight();
+                    if (!preFlight.Ok)
+                        throw new InvalidOperationException(preFlight.Error);
+                }
+
                 _source = (MECMOD.PartDocument)_catia.Documents.Open(SelectedItem.CatPartPath);
                 _source.Activate();
 
@@ -564,7 +601,16 @@ namespace ProfessionalPowerCopyCatalogModern
                 RunCheckButton.IsEnabled = true;
                 CloseSourceButton.IsEnabled = true;
                 OverallStatusText.Text = "AWAITING CATIA";
-                StatusText.Text = "Complete CATIA's native Insert Object dialog. After clicking OK, return here and choose Run check.";
+
+                if (isLifter)
+                {
+                    ShowLifterStudio();
+                    StatusText.Text = "Complete CATIA's Insert Object dialog, then refresh the instances in Lifter Studio.";
+                }
+                else
+                {
+                    StatusText.Text = "Complete CATIA's native Insert Object dialog. After clicking OK, return here and choose Run check.";
+                }
             }
             catch (Exception ex)
             {
@@ -585,6 +631,182 @@ namespace ProfessionalPowerCopyCatalogModern
             item.CheckScriptFile = Path.GetFileName(package.ScriptPath);
             item.CheckFunction = package.CheckFunction;
             item.PowerCopyName = package.PowerCopyName;
+            if (!string.IsNullOrWhiteSpace(package.Workflow)) item.Workflow = package.Workflow;
+        }
+
+        // ================================================================
+        // Lifter Studio integration (C# port of the Lifter catvba macro)
+        // ================================================================
+
+        /// <summary>A template flagged with Workflow = "lifter" (server catalog,
+        /// package manifest or local catalog.json) runs the integrated Lifter
+        /// Studio instead of the plain instantiate + check flow.</summary>
+        private static bool IsLifterTemplate(CatalogItem item)
+        {
+            return item != null &&
+                   string.Equals((item.Workflow ?? string.Empty).Trim(), "lifter",
+                       StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>First-run setup + fix-up on the destination part, exactly like
+        /// the CATMain of the macro: measure STROKE_Distance when missing (branded
+        /// setup dialog with retry / manual body pick), then link every instance's
+        /// STROKE_Distance to the root value and (re)create the Draft formulas.</summary>
+        private LifterPreFlightResult RunLifterPreFlight()
+        {
+            var result = new LifterPreFlightResult();
+            try
+            {
+                dynamic part = _destination.Part;
+
+                if (!LifterEngine.StrokeParameterExists(part))
+                {
+                    var setup = new LifterSetupWindow(_catia, _destination) { Owner = this };
+                    bool? dialogResult = setup.ShowDialog();
+                    if (dialogResult != true)
+                    {
+                        result.Error = "STROKE_Distance setup was cancelled. The lifter workflow needs it.";
+                        return result;
+                    }
+                    result.StrokeCreated = true;
+                }
+
+                // Same order as the macro: link first, then Draft.
+                result.Linked = LifterEngine.LinkStrokeToMainBody(part);
+                result.Drafts = LifterEngine.CreateDraftParameters(part);
+                result.Ok = true;
+            }
+            catch (Exception ex)
+            {
+                result.Error = LifterEngine.FriendlyCatiaError(ex);
+            }
+            return result;
+        }
+
+        /// <summary>Opens (or re-activates) the Lifter Studio window bound to the
+        /// current destination CATPart. Modeless and not top-most so the user can
+        /// keep working in CATIA next to it.</summary>
+        private void ShowLifterStudio()
+        {
+            try
+            {
+                CatalogItem item = _lifterSessionItem ?? SelectedItem;
+                if (item == null) return;
+
+                if (_lifterStudio != null && _lifterStudio.IsLoaded)
+                {
+                    if (ReferenceEquals(_lifterStudio.Item, item) &&
+                        ReferenceEquals(_lifterStudio.Document, _destination))
+                    {
+                        _lifterStudio.Activate();
+                        return;
+                    }
+                    _lifterStudio.Close();
+                    _lifterStudio = null;
+                }
+
+                _lifterStudio = new LifterStudioWindow(this, _catia, _destination, item, LaunchLifterInstantiateAsync)
+                {
+                    Owner = this
+                };
+                _lifterStudio.Closed += delegate { _lifterStudio = null; };
+                _lifterStudio.Show();
+            }
+            catch (Exception ex)
+            {
+                StatusText.Text = "Lifter Studio could not be opened: " + ex.Message;
+            }
+        }
+
+        /// <summary>Used by Lifter Studio's "New instance" button. Re-acquires a
+        /// lease and re-downloads the encrypted server package when the previous
+        /// session wiped it, then relaunches CATIA's native Instantiate From
+        /// Selection with the PowerCopy reference selected.</summary>
+        private async Task<bool> LaunchLifterInstantiateAsync(CatalogItem item)
+        {
+            bool reopenedHere = false;
+            try
+            {
+                if (item == null) return false;
+                if (_catia == null) { ConnectToCatia(); if (_catia == null) return false; }
+
+                // The lifter package never stays on disk between sessions: make sure
+                // the secure package is available again (lease + fresh download).
+                if (string.IsNullOrWhiteSpace(item.CatPartPath) || !File.Exists(item.CatPartPath))
+                {
+                    if (string.IsNullOrWhiteSpace(_activeLeaseToken))
+                    {
+                        LeaseResponse lease = await _api.AcquireLeaseAsync(
+                            item.Id, _deviceId, Environment.MachineName);
+                        _activeLeaseToken = lease.lease_token;
+                        _heartbeatTimer.Start();
+                    }
+
+                    StatusText.Text = "Re-downloading the encrypted template package from the server…";
+                    var progress = new Progress<PackageDownloadProgress>(value =>
+                    {
+                        PackageStatusText.Text = value.TotalBytes.HasValue && value.TotalBytes.Value > 0
+                            ? string.Format("Downloading {0}%…", value.Percent)
+                            : "Downloading…";
+                    });
+                    PreparedPackage package = await _packageManager.PrepareAsync(
+                        item, _api, _activeLeaseToken, progress);
+                    ApplyPreparedPackage(item, package);
+                    _lifterSessionItem = item;
+                }
+
+                // Tolerate a source document the user closed directly inside CATIA.
+                if (_source != null)
+                {
+                    try { _source.Activate(); }
+                    catch { _source = null; }
+                }
+                if (_source == null)
+                {
+                    _source = (MECMOD.PartDocument)_catia.Documents.Open(item.CatPartPath);
+                    reopenedHere = true;
+                }
+                _source.Activate();
+
+                INFITF.AnyObject reference = FindAndSelectReference(_source, item.PowerCopyName);
+                if (reference == null) return false;
+
+                _destination.Activate();
+                _catia.StartCommand("Instantiate From Selection");
+                _catia.RefreshDisplay = true;
+
+                CloseSourceButton.IsEnabled = true;
+                OverallStatusText.Text = "AWAITING CATIA";
+                return true;
+            }
+            catch (Exception)
+            {
+                if (reopenedHere) CloseSourceDocument();
+                return false;
+            }
+        }
+
+        /// <summary>Deletes the encrypted lifter package from this PC when the
+        /// template session ends (lease released), so the paid PowerCopy is never
+        /// stored locally. The next "Use in CATIA" downloads it again from the
+        /// server after a fresh entitlement check.</summary>
+        private void WipeLifterSessionPackage()
+        {
+            if (!WipeLifterPackageOnSessionEnd) return;
+            CatalogItem item = _lifterSessionItem;
+            if (item == null) return;
+            _lifterSessionItem = null;
+            try
+            {
+                _packageManager.Clear(item);
+                if (SelectedItem != null &&
+                    string.Equals(SelectedItem.Id, item.Id, StringComparison.OrdinalIgnoreCase))
+                {
+                    PackageStatusText.Text = "Session ended. The encrypted package was removed from this PC.";
+                    ClearPackageCacheButton.IsEnabled = false;
+                }
+            }
+            catch { }
         }
 
         private static bool HasLocalRuntimeFiles(CatalogItem item)
@@ -620,6 +842,7 @@ namespace ProfessionalPowerCopyCatalogModern
             try
             {
                 _packageManager.Clear(SelectedItem);
+                if (IsLifterTemplate(SelectedItem)) _lifterSessionItem = null;
                 CatalogItem local;
                 if (_localTemplateConfig.TryGetValue(SelectedItem.Id, out local))
                 {
@@ -663,7 +886,15 @@ namespace ProfessionalPowerCopyCatalogModern
 
                 string scriptPath = Path.Combine(SelectedItem.CheckScriptDirectory, SelectedItem.CheckScriptFile);
                 if (!File.Exists(scriptPath))
+                {
+                    // Lifter packages are wiped when their session ends, so a later
+                    // check needs a fresh "Use in CATIA" (new lease + download).
+                    if (IsLifterTemplate(SelectedItem))
+                        throw new FileNotFoundException(
+                            "The lifter session ended and its secure package was removed from this PC. " +
+                            "Use in CATIA again to start a new session and run the check.");
                     throw new FileNotFoundException("Check script not found.", scriptPath);
+                }
 
                 _destination.Activate();
                 StatusText.Text = "Running CATIA interference check...";
@@ -816,6 +1047,7 @@ namespace ProfessionalPowerCopyCatalogModern
             _activeLeaseToken = null;
             _heartbeatTimer.Stop();
             try { await _api.ReleaseAsync(token); } catch { }
+            WipeLifterSessionPackage();   // paid PowerCopy never stays on disk
         }
 
         private void CloseSourceDocument()
