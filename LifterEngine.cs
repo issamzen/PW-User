@@ -310,18 +310,28 @@ namespace ProfessionalPowerCopyCatalogModern
         /// <summary>part.MainBody with a fallback to the first body (VBA DetectMainBody).</summary>
         public static dynamic DetectMainBody(dynamic part)
         {
+            Exception error;
+            return DetectMainBody(part, out error);
+        }
+
+        /// <summary>Same as <see cref="DetectMainBody(object)"/> but reports the
+        /// last COM error instead of swallowing it, so the UI can tell the user
+        /// whether CATIA is busy or the part really has no body.</summary>
+        public static dynamic DetectMainBody(dynamic part, out Exception error)
+        {
+            error = null;
             try
             {
                 dynamic body = part.MainBody;
                 if (body != null) return body;
             }
-            catch { }
+            catch (Exception ex) { error = ex; }
             try
             {
                 dynamic bodies = part.Bodies;
                 if (TryCount(bodies) > 0) return bodies.Item(1);
             }
-            catch { }
+            catch (Exception ex) { error = ex; }
             return null;
         }
 
@@ -377,6 +387,16 @@ namespace ProfessionalPowerCopyCatalogModern
         /// parameter and always removes the TEMP_STROKE set.</summary>
         public static bool MeasureStrokeOnBody(dynamic part, dynamic mainBody)
         {
+            Exception error;
+            return MeasureStrokeOnBody(part, mainBody, out error);
+        }
+
+        /// <summary>Same as <see cref="MeasureStrokeOnBody(object,object)"/> but
+        /// reports the COM error behind a failed measurement (busy CATIA,
+        /// workbench access, empty body...).</summary>
+        public static bool MeasureStrokeOnBody(dynamic part, dynamic mainBody, out Exception error)
+        {
+            error = null;
             try
             {
                 dynamic hsf = part.HybridShapeFactory;
@@ -425,8 +445,9 @@ namespace ProfessionalPowerCopyCatalogModern
                 part.Update();
                 return true;
             }
-            catch
+            catch (Exception ex)
             {
+                error = ex;
                 try { DeleteGeometricalSet(part, TempSetName); } catch { }
                 return false;
             }

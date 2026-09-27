@@ -128,7 +128,7 @@ namespace ProfessionalPowerCopyCatalogModern
             {
                 foreach (CatalogItem local in _localTemplateConfig.Values)
                 {
-                    if (string.Equals((local.PowerCopyName ?? string.Empty).Trim(), powerCopy, StringComparison.OrdinalIgnoreCase))
+                    if (string.Equals(NormalizeKey(local.PowerCopyName), NormalizeKey(powerCopy), StringComparison.Ordinal))
                         return local;
                 }
             }
@@ -142,11 +142,24 @@ namespace ProfessionalPowerCopyCatalogModern
             {
                 foreach (CatalogItem local in _localTemplateConfig.Values)
                 {
-                    if (string.Equals((local.Name ?? string.Empty).Trim(), name, StringComparison.OrdinalIgnoreCase))
+                    if (string.Equals(NormalizeKey(local.Name), NormalizeKey(name), StringComparison.Ordinal))
                         return local;
                 }
             }
             return null;
+        }
+
+        /// <summary>Comparison key that survives case, spacing and punctuation
+        /// differences between the server row and the local catalog.json entry
+        /// ("Dog house lifter" == "DOGHOUSE-LIFTER").</summary>
+        private static string NormalizeKey(string value)
+        {
+            string text = (value ?? string.Empty).Trim().ToLowerInvariant();
+            foreach (char c in new[] { ' ', '-', '_', '.' })
+            {
+                text = text.Replace(c.ToString(), string.Empty);
+            }
+            return text;
         }
 
         private async Task LoadAuthorizedCatalogAsync()

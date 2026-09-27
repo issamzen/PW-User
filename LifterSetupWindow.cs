@@ -19,6 +19,7 @@ namespace ProfessionalPowerCopyCatalogModern
     {
         private readonly INFITF.Application _catia;
         private readonly MECMOD.PartDocument _document;
+        private readonly string _documentName;
         private dynamic _part;
         private dynamic _detectedBody;
 
@@ -40,6 +41,7 @@ namespace ProfessionalPowerCopyCatalogModern
             _catia = catia;
             _document = document;
             try { _part = document.Part; } catch { _part = null; }
+            try { _documentName = document.get_Name(); } catch { _documentName = null; }
 
             Title = "Lifter Studio — Setup";
             Width = 540;
@@ -154,6 +156,19 @@ namespace ProfessionalPowerCopyCatalogModern
                 Text = "This value is measured once from the main body's bounding box width and becomes the single source of truth for every lifter instance of this CATPart."
             });
 
+            if (!string.IsNullOrEmpty(_documentName))
+            {
+                stack.Children.Add(new TextBlock
+                {
+                    Text = "Destination: " + _documentName,
+                    FontSize = 10,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = LifterUi.Slate,
+                    Margin = new Thickness(0, 0, 0, 12),
+                    TextTrimming = TextTrimming.CharacterEllipsis
+                });
+            }
+
             _detectDot = new Ellipse { Width = 8, Height = 8, Fill = LifterUi.Busy, Margin = new Thickness(0, 0, 7, 0), VerticalAlignment = VerticalAlignment.Center };
             _detectText = new TextBlock { Text = "Detecting the main body…", FontSize = 11, Foreground = LifterUi.Slate, VerticalAlignment = VerticalAlignment.Center };
             var detectRow = new StackPanel { Orientation = Orientation.Horizontal };
@@ -264,12 +279,17 @@ namespace ProfessionalPowerCopyCatalogModern
             }
 
             SetWorking("Detecting the main body…");
-            _detectedBody = LifterEngine.DetectMainBody(_part);
+            Exception detectError;
+            _detectedBody = LifterEngine.DetectMainBody(_part, out detectError);
             if (_detectedBody == null)
             {
                 _detectDot.Fill = LifterUi.Danger;
                 _detectText.Text = "No main body found — use 'Choose another body'.";
-                Fail("No main body could be detected in this CATPart. Pick one manually.");
+                string reason = detectError != null
+                    ? LifterEngine.FriendlyCatiaError(detectError)
+                    : "This CATPart contains no solid Body to measure.";
+                Fail("The main body could not be detected.\n" + reason
+                     + "\n\nIf a CATIA dialog is open (e.g. Insert Object), close it and click Retry — or pick the body manually.");
                 return;
             }
 
@@ -281,14 +301,18 @@ namespace ProfessionalPowerCopyCatalogModern
         private void MeasureBody(dynamic body)
         {
             SetWorking("Measuring the bounding box width (Y direction)…");
-            bool ok = body != null && LifterEngine.MeasureStrokeOnBody(_part, body);
+            Exception measureError = null;
+            bool ok = body != null && LifterEngine.MeasureStrokeOnBody(_part, body, out measureError);
             if (ok)
             {
                 Succeed(LifterEngine.GetStrokeText(_part));
             }
             else
             {
-                Fail("The body could not be measured. Retry, or choose another body.");
+                string reason = measureError != null
+                    ? LifterEngine.FriendlyCatiaError(measureError)
+                    : "The body could not be measured (it may be empty).";
+                Fail(reason + "\n\nIf a CATIA dialog is open, close it and click Retry — or choose another body.");
             }
         }
 

@@ -1,7 +1,7 @@
 [
   {
     "Id": "LF001",
-    "Name": "Lifter Power Copy",
+    "Name": "DOGHOUSE LIFTER",
     "Category": "Lifters",
     "Version": "1.0.0",
     "Description": "Parametric lifter insert with UNDERCUT_DEPTH / LIFTER_HEAD control, automatic STROKE_Distance link from the main body, Draft angle rule (rounded to the degree, capped at 15) and integrated Boolean Remove.",
