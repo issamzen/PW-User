@@ -335,15 +335,15 @@
                         <ColumnDefinition Width="12"/>
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
-                    <!-- Explicit lifter setup: reads the destination CATPart and
-                         creates STROKE_Distance (one-time measurement). Also marks
+                    <!-- Explicit lifter setup: injects and runs the STROKE setup
+                         CATScript INSIDE CATIA (original macro logic) and marks
                          this card as a lifter template on this PC. -->
                     <Button x:Name="StrokeButton" Style="{StaticResource SecondaryButton}"
                             Click="StrokeButton_OnClick" IsEnabled="False"
-                            ToolTip="Read the destination CATPart and create STROKE_Distance from the main body measurement.">
+                            ToolTip="Injects and runs the STROKE setup script inside CATIA: detects the main body, measures the bounding box width and creates STROKE_Distance.">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#xE735;" FontFamily="Segoe MDL2 Assets" Margin="0,0,8,0"/>
-                            <TextBlock Text="STROKE setup"/>
+                            <TextBlock Text="Add STROKE script"/>
                         </StackPanel>
                     </Button>
                     <Button x:Name="UseInCatiaButton" Grid.Column="2" Style="{StaticResource PrimaryButton}" Click="UseInCatiaButton_OnClick">

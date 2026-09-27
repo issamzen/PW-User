@@ -97,10 +97,16 @@ Use in CATIA  (template flagged Workflow = "lifter")
    convenience — the Use in CATIA flow **never falls back** to them when the
    server package is unavailable.
 
-4. **Manual marking with the "STROKE setup" button** (always available, no
-   configuration): clicking **STROKE setup** on a card runs the lifter setup on
-   the active destination CATPart AND marks that card as a lifter template on
-   this PC. The marking is persisted in
+4. **Manual marking with the "Add STROKE script" button** (always available,
+   no configuration): the button injects and runs the STROKE setup CATScript
+   **inside CATIA** (`SystemService.ExecuteScript` - the exact strategy of the
+   integrated check scripts, i.e. the original catvba macro logic running
+   in-process). It detects the main body, measures the bounding box width,
+   creates STROKE_Distance when missing (no-op with the current value when it
+   exists) AND marks that card as a lifter template on this PC. The same
+   script also runs as step 1 of the lifter "Use in CATIA" flow and as the
+   post-download safety net, so no external design-data COM call is needed for
+   the setup at all. The marking is persisted in
    `%LOCALAPPDATA%\Estichara\MoldAutomationCatalog\lifter-templates.json`
    and survives restarts — one click per card per PC, then every later
    "Use in CATIA" runs the full lifter workflow automatically. This is the
