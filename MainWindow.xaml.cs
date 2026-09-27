@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Web.Script.Serialization;
 using System.Threading.Tasks;
 using System.Windows;
@@ -508,7 +509,6 @@ namespace ProfessionalPowerCopyCatalogModern
                 ? "Select a verified engineering template."
                 : "Ready. Use the template in CATIA, then run its integrated check.";
             UseInCatiaButton.IsEnabled = SelectedItem != null;
-            StrokeButton.IsEnabled = SelectedItem != null;
             RunCheckButton.IsEnabled = false;
             PackageStatusText.Text = SelectedItem == null
                 ? "Select a template."
@@ -533,7 +533,6 @@ namespace ProfessionalPowerCopyCatalogModern
                 ConnectionText.Foreground = BrushFrom("#166534");
                 ConnectionText.Text = "CATIA connected";
                 UseInCatiaButton.IsEnabled = SelectedItem != null;
-                StrokeButton.IsEnabled = SelectedItem != null;
             }
             catch (Exception ex)
             {
@@ -545,7 +544,6 @@ namespace ProfessionalPowerCopyCatalogModern
                 ConnectionText.Text = "CATIA offline";
                 // Keep the action available so the user can start CATIA and click again.
                 UseInCatiaButton.IsEnabled = SelectedItem != null;
-                StrokeButton.IsEnabled = SelectedItem != null;
                 StatusText.Text = ex.Message;
             }
         }
@@ -583,26 +581,15 @@ namespace ProfessionalPowerCopyCatalogModern
                 if (isLifter)
                 {
                     // ============================================================
-                    // STEP 1 of the lifter workflow — BEFORE any license seat is
-                    // taken or any package is downloaded: read STROKE_Distance
-                    // on the destination CATPart (direct COM call, the C# port
-                    // of the macro's first-run script). If it is missing, the
-                    // one-time measurement setup runs now; cancelling aborts
-                    // the whole flow with nothing leased and nothing downloaded.
+                    // The lifter workflow is the Lifter Studio macro itself: it
+                    // runs INSIDE CATIA on the ACTIVE CATPart, so the document
+                    // is validated here, before any license seat is taken and
+                    // before the secure package is downloaded.
                     // ============================================================
                     if (!(_catia.ActiveDocument is MECMOD.PartDocument))
                         throw new InvalidOperationException(
-                            "Open (or activate) the destination CATPart in CATIA first — the lifter workflow reads and creates STROKE_Distance on it.");
+                            "Open (or activate) the destination CATPart in CATIA first — the lifter script reads and creates STROKE_Distance on it.");
                     _destination = (MECMOD.PartDocument)_catia.ActiveDocument;
-
-                    UseInCatiaButton.IsEnabled = false;
-                    StatusText.Text = "Checking STROKE_Distance on the destination CATPart…";
-
-                    if (!EnsureStrokeDistance())
-                    {
-                        StatusText.Text = "Lifter setup cancelled — no license seat was used, nothing was downloaded.";
-                        return;
-                    }
                 }
 
                 UseInCatiaButton.IsEnabled = false;
@@ -691,39 +678,38 @@ namespace ProfessionalPowerCopyCatalogModern
                             : "No server package or local CATPart/CATScript is available for this template.");
                 }
 
-                StatusText.Text = "Package ready. Opening the CATIA template…";
-                if (!isLifter)
-                {
-                    // Non-lifter flow: always capture the active document (as before).
-                    _destination = (MECMOD.PartDocument)_catia.ActiveDocument;
-                }
-                else if (_destination == null)
-                {
-                    // Lifter flag arrived only now with the package manifest: no
-                    // early check ran, so validate the destination document now.
-                    if (!(_catia.ActiveDocument is MECMOD.PartDocument))
-                        throw new InvalidOperationException(
-                            "Open (or activate) the destination CATPart in CATIA first — the lifter workflow reads and creates STROKE_Distance on it.");
-                    _destination = (MECMOD.PartDocument)_catia.ActiveDocument;
-                }
-
                 if (isLifter)
                 {
-                    // Lifter workflow (catvba port): STROKE link and Draft
-                    // formula fix-up on the destination part, before the
-                    // template document opens (STROKE_Distance itself was
-                    // ensured at step 1, right after the click).
+                    // ========================================================
+                    // LIFTER WORKFLOW = the licensed Lifter Studio macro.
+                    // The package (and the license seat) are already secured,
+                    // so the macro now runs INSIDE CATIA: one-time
+                    // STROKE_Distance measurement, STROKE link, Draft
+                    // formulas, the parameter dashboard, the Boolean Remove
+                    // card and the PowerCopy hand-off.
+                    // ========================================================
+                    if (_destination == null)
+                    {
+                        if (!(_catia.ActiveDocument is MECMOD.PartDocument))
+                            throw new InvalidOperationException(
+                                "Open (or activate) the destination CATPart in CATIA first — the lifter script reads and creates STROKE_Distance on it.");
+                        _destination = (MECMOD.PartDocument)_catia.ActiveDocument;
+                    }
+
                     _lifterSessionItem = SelectedItem;
-                    StatusText.Text = "Preparing lifter parameters (STROKE_Distance link + Draft)…";
-                    LifterPreFlightResult preFlight = RunLifterPreFlight();
-                    if (!preFlight.Ok)
-                        throw new InvalidOperationException(preFlight.Error);
-                    StatusText.Text = string.Format(
-                        "Lifter parameters ready — STROKE linked ({0} instance{1}), Draft formulas ensured ({2}).",
-                        preFlight.Linked,
-                        preFlight.Linked == 1 ? "" : "s",
-                        preFlight.Drafts);
+                    StatusText.Text = "Lifter Studio is running inside CATIA — use the dashboard on the CATIA side…";
+                    OverallStatusText.Text = "AWAITING CATIA";
+
+                    string macroResult = await RunLifterStudioScriptAsync();
+                    ApplyLifterStudioResult(macroResult);
+
+                    RunCheckButton.IsEnabled = true;
+                    return;
                 }
+
+                StatusText.Text = "Package ready. Opening the CATIA template…";
+                // Non-lifter flow: always capture the active document (as before).
+                _destination = (MECMOD.PartDocument)_catia.ActiveDocument;
 
                 _source = (MECMOD.PartDocument)_catia.Documents.Open(SelectedItem.CatPartPath);
                 _source.Activate();
@@ -740,15 +726,7 @@ namespace ProfessionalPowerCopyCatalogModern
                 CloseSourceButton.IsEnabled = true;
                 OverallStatusText.Text = "AWAITING CATIA";
 
-                if (isLifter)
-                {
-                    ShowLifterStudio();
-                    StatusText.Text = "Complete CATIA's Insert Object dialog, then refresh the instances in Lifter Studio.";
-                }
-                else
-                {
-                    StatusText.Text = "Complete CATIA's native Insert Object dialog. After clicking OK, return here and choose Run check.";
-                }
+                StatusText.Text = "Complete CATIA's native Insert Object dialog. After clicking OK, return here and choose Run check.";
             }
             catch (Exception ex)
             {
@@ -759,7 +737,6 @@ namespace ProfessionalPowerCopyCatalogModern
             finally
             {
                 UseInCatiaButton.IsEnabled = SelectedItem != null;
-                StrokeButton.IsEnabled = SelectedItem != null;
             }
         }
 
@@ -857,79 +834,94 @@ namespace ProfessionalPowerCopyCatalogModern
             UpdateLifterIndicator();
         }
 
-        /// <summary>"STROKE setup" button: explicit lifter setup on the active
-        /// destination CATPart - reads STROKE_Distance if present, otherwise
-        /// runs the one-time measurement (main body bounding box width) and
-        /// creates the parameter. On success the selected card is marked as a
-        /// lifter template on this PC, so "Use in CATIA" then runs the full
-        /// lifter workflow (STROKE link, Draft formulas, Lifter Studio).</summary>
-        /// <summary>"Add STROKE script" button: injects and runs the STROKE
-        /// setup CATScript INSIDE CATIA (SystemService.ExecuteScript - the
-        /// exact strategy of the integrated check scripts, i.e. the original
-        /// catvba macro logic running in-process). Detects the main body,
-        /// measures the bounding box width and creates STROKE_Distance.</summary>
-        private void StrokeButton_OnClick(object sender, RoutedEventArgs e)
+        /// <summary>Runs the licensed Lifter Studio macro INSIDE CATIA.
+        /// The script is the VBScript edition of the original CATVBA macro:
+        /// it measures STROKE_Distance on first run, links every PowerCopy
+        /// instance to that single value, (re)creates the Draft formulas,
+        /// opens the Lifter Studio dashboard (parameters + Boolean Remove)
+        /// and finally hands over to the PowerCopy instantiation.
+        ///
+        /// It is executed on a dedicated STA thread with its own CATIA
+        /// connection: the macro keeps CATIA busy for as long as the
+        /// dashboard is open, and this keeps the WPF window responsive.
+        /// Returns POWERCOPY:&lt;linked&gt;:&lt;drafts&gt; / CLOSED:&lt;linked&gt;:&lt;drafts&gt; /
+        /// CANCELLED / ERROR:&lt;reason&gt;.</summary>
+        private Task<string> RunLifterStudioScriptAsync()
         {
-            try
+            string scriptPath = LifterStudioScript.Write();
+            string directory = Path.GetDirectoryName(scriptPath);
+            string fileName = Path.GetFileName(scriptPath);
+
+            var completion = new TaskCompletionSource<string>();
+            var worker = new Thread(delegate ()
             {
-                if (SelectedItem == null) throw new InvalidOperationException("Select a catalog item.");
-                if (!EnsureCatiaConnection()) return;
-
-                if (!(_catia.ActiveDocument is MECMOD.PartDocument))
-                    throw new InvalidOperationException(
-                        "Open (or activate) the destination CATPart in CATIA first - the STROKE script reads and creates STROKE_Distance on it.");
-
-                StatusText.Text = "Running the STROKE script inside CATIA...";
-                string result = RunStrokeSetupScript();
-
-                if (result.StartsWith("EXISTS:", StringComparison.OrdinalIgnoreCase))
+                try
                 {
-                    MarkSelectedAsLifter();
-                    StatusText.Text = "STROKE_Distance = " + result.Substring(7)
-                                      + " mm (already on the CATPart) - you can click 'Use in CATIA'.";
+                    // Own connection = own apartment: the long running macro
+                    // never blocks the dashboard's own COM proxy.
+                    var catia = (INFITF.Application)Marshal.GetActiveObject("CATIA.Application");
+                    object rawResult = catia.SystemService.ExecuteScript(
+                        directory,
+                        INFITF.CatScriptLibraryType.catScriptLibraryTypeDirectory,
+                        fileName,
+                        "CATMain",
+                        new object[0]);
+                    completion.SetResult(rawResult == null ? string.Empty : rawResult.ToString().Trim());
                 }
-                else if (result.StartsWith("CREATED:", StringComparison.OrdinalIgnoreCase))
+                catch (Exception ex)
                 {
-                    MarkSelectedAsLifter();
-                    string value = result.Substring(9);
-                    StatusText.Text = "STROKE_Distance = " + value + " mm created - now click 'Use in CATIA'.";
-                    MessageBox.Show(this,
-                        "STROKE_Distance = " + value + " mm was created on the destination CATPart.\n\n"
-                        + "This card is now marked as a lifter template on this PC - "
-                        + "'Use in CATIA' will run the full lifter workflow.",
-                        "Add STROKE script", MessageBoxButton.OK, MessageBoxImage.Information);
+                    completion.SetException(ex);
                 }
-                else if (string.Equals(result, "CANCELLED", StringComparison.OrdinalIgnoreCase))
+                finally
                 {
-                    StatusText.Text = "STROKE setup cancelled.";
+                    // The macro never stays on the customer's disk in clear text.
+                    try { if (File.Exists(scriptPath)) File.Delete(scriptPath); }
+                    catch { }
                 }
-                else
-                {
-                    string reason = result.Length == 0 ? "the script returned no result" : result;
-                    throw new InvalidOperationException("The STROKE script failed: " + reason);
-                }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(FriendlyApiError(ex.Message), "Add STROKE script", MessageBoxButton.OK, MessageBoxImage.Error);
-            }
+            });
+            worker.SetApartmentState(ApartmentState.STA);
+            worker.IsBackground = true;
+            worker.Start();
+            return completion.Task;
         }
 
-        /// <summary>Writes the embedded STROKE setup CATScript and executes it
-        /// inside CATIA - the same SystemService.ExecuteScript call the
-        /// integrated check scripts use (proven to work on this CATIA). The
-        /// script returns CREATED:&lt;mm&gt; / EXISTS:&lt;mm&gt; / CANCELLED /
-        /// ERROR:&lt;reason&gt;.</summary>
-        private string RunStrokeSetupScript()
+        /// <summary>Turns the macro's return code into dashboard feedback.</summary>
+        private void ApplyLifterStudioResult(string result)
         {
-            string scriptPath = LifterEngine.WriteStrokeSetupScript();
-            object rawResult = _catia.SystemService.ExecuteScript(
-                Path.GetDirectoryName(scriptPath),
-                INFITF.CatScriptLibraryType.catScriptLibraryTypeDirectory,
-                Path.GetFileName(scriptPath),
-                "CATMain",
-                new object[0]);
-            return rawResult == null ? string.Empty : rawResult.ToString().Trim();
+            result = (result ?? string.Empty).Trim();
+
+            if (result.StartsWith("ERROR:", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException(result.Substring(6).Trim());
+
+            if (result.Length == 0)
+                throw new InvalidOperationException(
+                    "The Lifter Studio script returned no result. Check that CATIA allows macros to run.");
+
+            if (string.Equals(result, "CANCELLED", StringComparison.OrdinalIgnoreCase))
+            {
+                OverallStatusText.Text = "NOT RUN";
+                StatusText.Text = "Lifter setup was cancelled in CATIA - nothing was changed on the CATPart.";
+                return;
+            }
+
+            string[] parts = result.Split(':');
+            string linked = parts.Length > 1 ? parts[1] : "0";
+            string drafts = parts.Length > 2 ? parts[2] : "0";
+
+            if (result.StartsWith("POWERCOPY:", StringComparison.OrdinalIgnoreCase))
+            {
+                StatusText.Text = string.Format(
+                    "Lifter Studio finished - STROKE linked ({0}), Draft formulas ensured ({1}). "
+                    + "Complete CATIA's PowerCopy instantiation, then choose Run check.",
+                    linked, drafts);
+            }
+            else
+            {
+                StatusText.Text = string.Format(
+                    "Lifter Studio closed - STROKE linked ({0}), Draft formulas ensured ({1}). "
+                    + "Choose Run check to validate the part.",
+                    linked, drafts);
+            }
         }
 
         /// <summary>A template flagged with Workflow = "lifter" (server catalog,
@@ -940,91 +932,6 @@ namespace ProfessionalPowerCopyCatalogModern
             return item != null &&
                    string.Equals((item.Workflow ?? string.Empty).Trim(), "lifter",
                        StringComparison.OrdinalIgnoreCase);
-        }
-
-        /// <summary>First-run setup + fix-up on the destination part, exactly like
-        /// the CATMain of the macro: measure STROKE_Distance when missing (branded
-        /// setup dialog with retry / manual body pick), then link every instance's
-        /// STROKE_Distance to the root value and (re)create the Draft formulas.</summary>
-        /// <summary>Step 1 of the lifter workflow, executed right after the
-        /// "Use in CATIA" click and BEFORE any license seat or package
-        /// download: reads STROKE_Distance on the destination CATPart. When it
-        /// is missing, the one-time measurement setup window runs (measure the
-        /// main body bounding box width / pick another body). Returns false
-        /// when the user cancels — the whole flow stops with nothing leased
-        /// and nothing downloaded.</summary>
-        /// <summary>Step 1 of the lifter workflow, executed right after the
-        /// "Use in CATIA" click and BEFORE any license seat or package
-        /// download: runs the in-CATIA STROKE script. It verifies
-        /// STROKE_Distance (no-op when it already exists) and runs the
-        /// one-time measurement when missing. Returns false when the user
-        /// cancels - nothing leased, nothing downloaded.</summary>
-        private bool EnsureStrokeDistance()
-        {
-            StatusText.Text = "Checking STROKE_Distance (script inside CATIA)...";
-            string result = RunStrokeSetupScript();
-
-            if (result.StartsWith("EXISTS:", StringComparison.OrdinalIgnoreCase))
-            {
-                StatusText.Text = "STROKE_Distance = " + result.Substring(7)
-                                  + " mm - continuing to the PowerCopy.";
-                return true;
-            }
-            if (result.StartsWith("CREATED:", StringComparison.OrdinalIgnoreCase))
-            {
-                StatusText.Text = "STROKE_Distance = " + result.Substring(9)
-                                  + " mm created - continuing to the PowerCopy.";
-                return true;
-            }
-            if (string.Equals(result, "CANCELLED", StringComparison.OrdinalIgnoreCase))
-                return false;
-
-            throw new InvalidOperationException(
-                "STROKE setup failed: " + (result.Length == 0 ? "the script returned no result" : result));
-        }
-
-        private LifterPreFlightResult RunLifterPreFlight()
-        {
-            var result = new LifterPreFlightResult();
-            try
-            {
-                // Safety net: the workflow flag can arrive with the package
-                // manifest (after the download), in which case the early check
-                // at click time did not run - the in-CATIA script verifies
-                // (and creates when missing) STROKE_Distance by itself.
-                string stroke = RunStrokeSetupScript();
-                if (stroke.StartsWith("EXISTS:", StringComparison.OrdinalIgnoreCase))
-                {
-                    result.StrokeCreated = false;
-                }
-                else if (stroke.StartsWith("CREATED:", StringComparison.OrdinalIgnoreCase))
-                {
-                    result.StrokeCreated = true;
-                }
-                else if (string.Equals(stroke, "CANCELLED", StringComparison.OrdinalIgnoreCase))
-                {
-                    result.Error = "STROKE_Distance setup was cancelled. The lifter workflow needs it.";
-                    return result;
-                }
-                else
-                {
-                    result.Error = "STROKE_Distance setup failed: "
-                                   + (stroke.Length == 0 ? "the script returned no result" : stroke);
-                    return result;
-                }
-
-                dynamic part = _destination.Part;
-
-                // Same order as the macro: link first, then Draft.
-                result.Linked = LifterEngine.LinkStrokeToMainBody(part);
-                result.Drafts = LifterEngine.CreateDraftParameters(part);
-                result.Ok = true;
-            }
-            catch (Exception ex)
-            {
-                result.Error = LifterEngine.FriendlyCatiaError(ex);
-            }
-            return result;
         }
 
         /// <summary>Opens (or re-activates) the Lifter Studio window bound to the

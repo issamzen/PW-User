@@ -332,41 +332,32 @@
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="12"/>
                         <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="12"/>
-                        <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
-                    <!-- Explicit lifter setup: injects and runs the STROKE setup
-                         CATScript INSIDE CATIA (original macro logic) and marks
-                         this card as a lifter template on this PC. -->
-                    <Button x:Name="StrokeButton" Style="{StaticResource SecondaryButton}"
-                            Click="StrokeButton_OnClick" IsEnabled="False"
-                            ToolTip="Injects and runs the STROKE setup script inside CATIA: detects the main body, measures the bounding box width and creates STROKE_Distance.">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE735;" FontFamily="Segoe MDL2 Assets" Margin="0,0,8,0"/>
-                            <TextBlock Text="Add STROKE script"/>
-                        </StackPanel>
-                    </Button>
-                    <Button x:Name="UseInCatiaButton" Grid.Column="2" Style="{StaticResource PrimaryButton}" Click="UseInCatiaButton_OnClick">
+                    <!-- "Use in CATIA" runs the licensed Lifter Studio macro
+                         INSIDE CATIA (STROKE_Distance setup, STROKE link, Draft
+                         formulas, parameter dashboard and PowerCopy hand-off). -->
+                    <Button x:Name="UseInCatiaButton" Grid.Column="0" Style="{StaticResource PrimaryButton}" Click="UseInCatiaButton_OnClick"
+                            ToolTip="Runs the Lifter Studio script inside CATIA: STROKE_Distance setup, STROKE link, Draft formulas, parameter dashboard and PowerCopy instantiation.">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#xE768;" FontFamily="Segoe MDL2 Assets" Foreground="White" Margin="0,0,8,0"/>
                             <TextBlock Text="Use in CATIA" Foreground="White"/>
                         </StackPanel>
                     </Button>
-                    <Button x:Name="RunCheckButton" Grid.Column="4" Style="{StaticResource PrimaryButton}" Background="#0F766E"
+                    <Button x:Name="RunCheckButton" Grid.Column="2" Style="{StaticResource PrimaryButton}" Background="#0F766E"
                             Click="RunCheckButton_OnClick" IsEnabled="False">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#xE9D5;" FontFamily="Segoe MDL2 Assets" Foreground="White" Margin="0,0,8,0"/>
                             <TextBlock Text="Run check" Foreground="White"/>
                         </StackPanel>
                     </Button>
-                    <Button x:Name="CloseSourceButton" Grid.Column="6" Style="{StaticResource SecondaryButton}"
+                    <Button x:Name="CloseSourceButton" Grid.Column="4" Style="{StaticResource SecondaryButton}"
                             Click="CloseSourceButton_OnClick" IsEnabled="False">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#xE711;" FontFamily="Segoe MDL2 Assets" Margin="0,0,8,0"/>
                             <TextBlock Text="Close source"/>
                         </StackPanel>
                     </Button>
-                    <Grid Grid.Row="1" Grid.ColumnSpan="7" Margin="2,10,2,0">
+                    <Grid Grid.Row="1" Grid.ColumnSpan="5" Margin="2,10,2,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>

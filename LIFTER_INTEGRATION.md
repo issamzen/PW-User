@@ -97,21 +97,10 @@ Use in CATIA  (template flagged Workflow = "lifter")
    convenience — the Use in CATIA flow **never falls back** to them when the
    server package is unavailable.
 
-4. **Manual marking with the "Add STROKE script" button** (always available,
-   no configuration): the button injects and runs the STROKE setup CATScript
-   **inside CATIA** (`SystemService.ExecuteScript` - the exact strategy of the
-   integrated check scripts, i.e. the original catvba macro logic running
-   in-process). It detects the main body, measures the bounding box width,
-   creates STROKE_Distance when missing (no-op with the current value when it
-   exists) AND marks that card as a lifter template on this PC. The same
-   script also runs as step 1 of the lifter "Use in CATIA" flow and as the
-   post-download safety net, so no external design-data COM call is needed for
-   the setup at all. The marking is persisted in
-   `%LOCALAPPDATA%\Estichara\MoldAutomationCatalog\lifter-templates.json`
-   and survives restarts — one click per card per PC, then every later
-   "Use in CATIA" runs the full lifter workflow automatically. This is the
-   recommended path when the server catalog and the package manifest do not
-   carry the flag.
+4. *(removed)* The old **"Add STROKE script"** button no longer exists. The
+   STROKE_Distance setup is not a separate step any more: it is the first
+   thing the Lifter Studio macro does inside CATIA when "Use in CATIA" runs
+   a lifter template.
 
 **How to verify the flag resolved:** select the lifter card in the dashboard —
 if it is flagged correctly, a blue **"Lifter workflow"** badge appears next to
@@ -120,6 +109,42 @@ CATIA" will run the plain PowerCopy flow (no setup panel, no Lifter Studio).
 
 The `Lifters` category chip was added to the catalog pane, and the example
 `LF001` entry uses `Category: "Lifters"`.
+
+## "Use in CATIA" = the original macro, running inside CATIA
+
+Since the Lifter Studio release, a lifter template does **not** use the C#
+re-implementation of the macro any more. `UseInCatiaButton_OnClick` now:
+
+1. validates that the active CATIA document is the destination **CATPart**;
+2. requests the **license seat** (lease + heartbeat);
+3. downloads / unlocks the **encrypted Hostinger package** (SHA-256 verified);
+4. writes `Scripts/LifterStudio.CATScript` to
+   `%LOCALAPPDATA%\Estichara\MoldAutomationCatalog\Scripts` and runs its
+   `CATMain` **inside CATIA** through `SystemService.ExecuteScript`, on a
+   dedicated STA thread (the WPF window stays responsive while the CATIA-side
+   dashboard is open). The script file is deleted again as soon as the macro
+   returns.
+
+`LifterStudio.CATScript` is the VBScript edition of the original CATVBA
+macro - same HTA dashboard, same parameter names (`UPPER_INTERNAL_LENGTH`,
+`INTERNAL_VERTICAL_ANGLE`, `INTERNAL_HORIZONTAL_ANGLE`, `HAS_EXTERNAL_FACE`,
+`UNDERCUT_LENGTH`, `STROKE_Distance`, `Draft`), same first-run setup panel,
+same Boolean Remove card and the same PowerCopy hand-off. It is generated
+from the macro by `Scripts/LifterStudio.CATScript` -> `LifterStudioScript.cs`
+(`LifterStudioScript.Source`), so the C# file must never be edited by hand.
+
+Return codes read by the dashboard:
+
+| Return | Meaning |
+|---|---|
+| `POWERCOPY:<linked>:<drafts>` | dashboard closed with "PowerCopy", CATIA's instantiation was started |
+| `CLOSED:<linked>:<drafts>` | dashboard closed normally |
+| `CANCELLED` | the one-time STROKE_Distance setup was cancelled |
+| `ERROR:<reason>` | no CATPart active / part not accessible |
+
+The C# port (`LifterEngine`, `LifterSetupWindow`, `LifterStudioWindow`) is
+kept in the repository for reference and for the non-lifter tooling, but it
+is no longer on the "Use in CATIA" path.
 
 ## VBA → C# mapping
 
