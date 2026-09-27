@@ -125,6 +125,27 @@ re-implementation of the macro any more. `UseInCatiaButton_OnClick` now:
    dashboard is open). The script file is deleted again as soon as the macro
    returns.
 
+### Why the app owns the waiting loop
+
+VBScript has **no `DoEvents`**. The original CATVBA macro pumped Windows
+messages inside its wait loop, which is what kept CATIA usable while the HTA
+dashboard was open. A VBScript loop cannot do that: CATIA would be frozen for
+the whole session.
+
+So the loop moved into the application:
+
+| Step | Who | What |
+|---|---|---|
+| 1 | app → script | `PrepareSession` — STROKE link, Draft formulas, writes the dashboard HTA, returns `OK\|<hta>\|<linked>\|<drafts>` (or `NOSTROKE`, `ERROR:…`) |
+| 2 | app | launches `mshta.exe` with the dashboard and polls `%TEMP%\PWLifterSession\cmd.txt` every 180 ms |
+| 3 | app → script | `RunCommand` — executes **one** command (REFRESH / UPDATE / SELECTBODY / REMOVEONE / POWERCOPY / CLOSE) and returns immediately |
+| 4 | app | stops when the dashboard sends CLOSE, starts the PowerCopy, or the HTA window is closed |
+
+Between two commands CATIA is completely free: the user can rotate, zoom,
+select and keep modelling with the dashboard open. Because each call is a new
+script execution, the Boolean Remove selections are persisted as **body names**
+in `%TEMP%\PWLifterSession\bodies.txt` instead of COM references.
+
 `LifterStudio.CATScript` is the VBScript edition of the original CATVBA
 macro - same HTA dashboard, same parameter names (`UPPER_INTERNAL_LENGTH`,
 `INTERNAL_VERTICAL_ANGLE`, `INTERNAL_HORIZONTAL_ANGLE`, `HAS_EXTERNAL_FACE`,

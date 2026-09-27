@@ -956,21 +956,39 @@ Function InstanceTag(instanceIndex)
     InstanceTag = Pad3(instanceIndex)
 End Function
 
+'------------------------------------------------------------------
+' The stores keep body NAMES, not COM references: the application
+' calls this script once per dashboard command, so nothing survives
+' in memory between two commands. A name is resolved to the live
+' body on every use.
+'------------------------------------------------------------------
 Function GetStoredObject(store, instanceIndex)
     On Error Resume Next
     Set GetStoredObject = Nothing
     If store Is Nothing Then Exit Function
-    If store.Exists(StoredKey(instanceIndex)) Then Set GetStoredObject = store.Item(StoredKey(instanceIndex))
+    Dim nm
+    nm = GetStoredText(store, instanceIndex)
+    If Len(nm) = 0 Then Exit Function
+    Set GetStoredObject = ResolveBodyByName(nm)
     Err.Clear
 End Function
 
 Sub SetStoredObject(store, instanceIndex, item)
     On Error Resume Next
-    If store Is Nothing Then Exit Sub
-    If store.Exists(StoredKey(instanceIndex)) Then store.Remove StoredKey(instanceIndex)
-    store.Add StoredKey(instanceIndex), item
+    Dim nm
+    nm = """"
+    If Not item Is Nothing Then nm = CStr(item.Name)
+    SetStoredText store, instanceIndex, nm
     Err.Clear
 End Sub
+
+Function ResolveBodyByName(nm)
+    On Error Resume Next
+    Set ResolveBodyByName = Nothing
+    If gPart Is Nothing Then Exit Function
+    Set ResolveBodyByName = gPart.Bodies.Item(nm)
+    Err.Clear
+End Function
 
 Function GetStoredText(store, instanceIndex)
     On Error Resume Next
@@ -2590,6 +2608,186 @@ End Sub
 ' Sleep without DoEvents: a blocking ping for the long waits (no CPU
 ' burn while the HTA dashboard is used), a Timer loop for short ones.
 '------------------------------------------------------------------
+'==================================================================
+' Command server - driven by the PW-User application
+'------------------------------------------------------------------
+' IMPORTANT: VBScript has no DoEvents, so a waiting loop inside this
+' script would freeze CATIA for as long as the dashboard is open.
+' The application therefore owns the loop: it launches the HTA, polls
+' the command file and calls RunCommand() once per user action. Each
+' call returns immediately, so CATIA stays fully interactive.
+'==================================================================
+
+Dim gPart, gDoc
+
+Function SessionDir()
+    On Error Resume Next
+    Dim d
+    d = TempDir() & ""\PWLifterSession""
+    If Not gFso.FolderExists(d) Then gFso.CreateFolder d
+    SessionDir = d
+    Err.Clear
+End Function
+
+Function CmdPath()
+    CmdPath = SessionDir() & ""\cmd.txt""
+End Function
+
+Function RspPath()
+    RspPath = SessionDir() & ""\rsp.txt""
+End Function
+
+Function DashboardPath()
+    DashboardPath = SessionDir() & ""\dashboard.hta""
+End Function
+
+Function StatePath()
+    StatePath = SessionDir() & ""\bodies.txt""
+End Function
+
+'------------------------------------------------------------------
+' Step 1: prepare the session and BUILD the dashboard, then return.
+'   NOSTROKE                       STROKE_Distance must be measured
+'   OK|<hta>|<linked>|<drafts>     ready, the app launches the HTA
+'   ERROR:<reason>
+'------------------------------------------------------------------
+Function PrepareSession()
+    On Error Resume Next
+    PrepareSession = ""ERROR:The lifter dashboard could not be prepared.""
+
+    If CATIA.Documents.Count = 0 Then
+        PrepareSession = ""ERROR:No document is open in CATIA - open the CATPart first.""
+        Exit Function
+    End If
+    If TypeName(CATIA.ActiveDocument) <> ""PartDocument"" Then
+        PrepareSession = ""ERROR:The active CATIA document must be a CATPart.""
+        Exit Function
+    End If
+
+    Set gDoc = CATIA.ActiveDocument
+    Set gPart = gDoc.Part
+    If Err.Number <> 0 Then
+        PrepareSession = ""ERROR:The CATPart is not accessible.""
+        Exit Function
+    End If
+
+    If Not StrokeParameterExists(gPart) Then
+        PrepareSession = ""NOSTROKE""
+        Exit Function
+    End If
+
+    Dim linked, drafts
+    linked = LinkStrokeToMainBody(gPart)
+    drafts = CreateDraftParameters(gPart)
+
+    DeleteFile CmdPath()
+    DeleteFile RspPath()
+    DeleteFile DashboardPath()
+    Err.Clear
+
+    BuildDashboard DashboardPath(), CmdPath(), RspPath(), gDoc.Name, gPart, APP_TITLE, linked, drafts
+    If Not gFso.FileExists(DashboardPath()) Then
+        PrepareSession = ""ERROR:The dashboard file could not be written.""
+        Exit Function
+    End If
+
+    PrepareSession = ""OK|"" & DashboardPath() & ""|"" & CStr(linked) & ""|"" & CStr(drafts)
+    Err.Clear
+End Function
+
+'------------------------------------------------------------------
+' Step 2: execute exactly ONE dashboard command and return at once.
+' Returns the command name (REFRESH / UPDATE / SELECTBODY / REMOVEONE
+' / POWERCOPY / CLOSE), ""IDLE"" when there is nothing to do, or
+' ""ERROR:<reason>"".
+'------------------------------------------------------------------
+Function RunCommand()
+    On Error Resume Next
+    RunCommand = ""IDLE""
+
+    If Not gFso.FileExists(CmdPath()) Then Exit Function
+    Dim data
+    data = ReadAll(CmdPath())
+    DeleteFile CmdPath()
+    If Len(Trim(data)) = 0 Then Exit Function
+
+    If CATIA.Documents.Count = 0 Then
+        RunCommand = ""ERROR:No document is open in CATIA.""
+        Exit Function
+    End If
+    If TypeName(CATIA.ActiveDocument) <> ""PartDocument"" Then
+        RunCommand = ""ERROR:The active CATIA document must be a CATPart.""
+        Exit Function
+    End If
+
+    Set gDoc = CATIA.ActiveDocument
+    Set gPart = gDoc.Part
+    LoadBodyState
+
+    Dim action, instanceIndex
+    action = UCase(ReadKey(data, ""COMMAND""))
+    instanceIndex = ReadInstance(data)
+    DeleteFile RspPath()
+
+    If action = ""REFRESH"" Then SendValues gPart, RspPath(), instanceIndex
+    If action = ""UPDATE"" Then UpdateValues gPart, data, RspPath(), instanceIndex
+    If action = ""SELECTBODY"" Then ChooseInstanceBody gPart, data, RspPath(), APP_TITLE
+    If action = ""REMOVEONE"" Then RunBooleanRemove gPart, RspPath(), instanceIndex
+    If action = ""POWERCOPY"" Then StartPowerCopy
+
+    SaveBodyState
+    Err.Clear
+    RunCommand = action
+End Function
+
+'------------------------------------------------------------------
+' Boolean Remove selections survive between two commands in a file.
+'------------------------------------------------------------------
+Sub LoadBodyState()
+    On Error Resume Next
+    EnsureBodyCollections
+    gCopyBodyNames.RemoveAll
+    gTargetBodyNames.RemoveAll
+    gCopyBodyObjects.RemoveAll
+    gTargetBodyObjects.RemoveAll
+    If Not gFso.FileExists(StatePath()) Then Exit Sub
+
+    Dim lines, i, parts, idx
+    lines = Split(Replace(ReadAll(StatePath()), vbCrLf, vbLf), vbLf)
+    For i = 0 To UBound(lines)
+        parts = Split(lines(i), ""|"")
+        If UBound(parts) >= 2 Then
+            idx = CLng(parts(1))
+            If UCase(parts(0)) = ""COPY"" Then
+                SetStoredText gCopyBodyNames, idx, parts(2)
+                SetStoredText gCopyBodyObjects, idx, parts(2)
+            End If
+            If UCase(parts(0)) = ""TARGET"" Then
+                SetStoredText gTargetBodyNames, idx, parts(2)
+                SetStoredText gTargetBodyObjects, idx, parts(2)
+            End If
+        End If
+    Next
+    Err.Clear
+End Sub
+
+Sub SaveBodyState()
+    On Error Resume Next
+    Dim f, keys, i
+    Set f = NewWriter(StatePath())
+    If f Is Nothing Then Exit Sub
+    keys = gCopyBodyNames.Keys
+    For i = 0 To UBound(keys)
+        f.WriteLine ""COPY|"" & CStr(CLng(keys(i))) & ""|"" & gCopyBodyNames.Item(keys(i))
+    Next
+    keys = gTargetBodyNames.Keys
+    For i = 0 To UBound(keys)
+        f.WriteLine ""TARGET|"" & CStr(CLng(keys(i))) & ""|"" & gTargetBodyNames.Item(keys(i))
+    Next
+    f.Close
+    Err.Clear
+End Sub
+
 Sub SleepMs(milliseconds)
     On Error Resume Next
     Dim started, elapsed, seconds

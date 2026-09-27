@@ -1212,15 +1212,112 @@ namespace ProfessionalPowerCopyCatalogModern
         /// dashboard is open, and this keeps the WPF window responsive.
         /// Returns POWERCOPY:&lt;linked&gt;:&lt;drafts&gt; / CLOSED:&lt;linked&gt;:&lt;drafts&gt; /
         /// CANCELLED / ERROR:&lt;reason&gt;.</summary>
-        private Task<string> RunLifterStudioScriptAsync()
+        /// <summary>
+        /// Runs the CATIA lifter dashboard WITHOUT blocking CATIA.
+        ///
+        /// VBScript has no DoEvents, so a waiting loop inside the macro would
+        /// freeze CATIA for as long as the dashboard is open. The loop lives
+        /// here instead: the script only prepares the session and then
+        /// executes ONE command per call (each returns in a fraction of a
+        /// second), so the user can rotate, select and work in CATIA while
+        /// the dashboard is on screen.
+        /// </summary>
+        private async Task<string> RunLifterStudioScriptAsync()
         {
             string scriptPath = LifterStudioScript.Write();
-            return RunCatiaScriptAsync(scriptPath, "CATMain", true);
+            string sessionDir = Path.Combine(Path.GetTempPath(), "PWLifterSession");
+            string commandFile = Path.Combine(sessionDir, "cmd.txt");
+            Process dashboard = null;
+
+            try
+            {
+                // ---- 1. prepare (STROKE link + Draft + build the HTA) ------
+                string prepared = await RunCatiaScriptAsync(scriptPath, "PrepareSession", false);
+
+                if (string.Equals(prepared, "NOSTROKE", StringComparison.OrdinalIgnoreCase))
+                {
+                    MessageBoxResult answer = MessageBox.Show(
+                        "STROKE_Distance does not exist on this CATPart yet.\n\n" +
+                        "Measure it now from the main body (bounding box width)?",
+                        "PW-User — Lifter parameters",
+                        MessageBoxButton.YesNo, MessageBoxImage.Question);
+                    if (answer != MessageBoxResult.Yes) return "CANCELLED";
+
+                    string strokeScript = LifterEngine.WriteStrokeSetupScript();
+                    string strokeResult = await RunCatiaScriptAsync(strokeScript, "CATMain", false);
+                    if (strokeResult.StartsWith("ERROR:", StringComparison.OrdinalIgnoreCase))
+                        return strokeResult;
+                    if (string.Equals(strokeResult, "CANCELLED", StringComparison.OrdinalIgnoreCase))
+                        return "CANCELLED";
+
+                    prepared = await RunCatiaScriptAsync(scriptPath, "PrepareSession", false);
+                }
+
+                if (prepared.StartsWith("ERROR:", StringComparison.OrdinalIgnoreCase)) return prepared;
+                if (!prepared.StartsWith("OK|", StringComparison.OrdinalIgnoreCase))
+                    return "ERROR:" + (prepared.Length == 0 ? "the dashboard did not start" : prepared);
+
+                string[] parts = prepared.Split('|');
+                string htaPath = parts.Length > 1 ? parts[1] : string.Empty;
+                string linked = parts.Length > 2 ? parts[2] : "0";
+                string drafts = parts.Length > 3 ? parts[3] : "0";
+                if (!File.Exists(htaPath)) return "ERROR:the dashboard file is missing";
+
+                // ---- 2. show the dashboard (its own process: mshta) --------
+                try { File.Delete(commandFile); } catch { }
+                dashboard = Process.Start("mshta.exe", "\"" + htaPath + "\"");
+
+                // ---- 3. pump its commands, CATIA stays interactive ---------
+                string ending = "CLOSED";
+                while (true)
+                {
+                    await Task.Delay(180);
+
+                    bool alive = false;
+                    try { alive = dashboard != null && !dashboard.HasExited; }
+                    catch { alive = false; }
+
+                    bool hasCommand = false;
+                    try { hasCommand = File.Exists(commandFile) && new FileInfo(commandFile).Length > 0; }
+                    catch { hasCommand = false; }
+
+                    if (hasCommand)
+                    {
+                        string handled = await RunCatiaScriptAsync(scriptPath, "RunCommand", false);
+
+                        if (handled.StartsWith("ERROR:", StringComparison.OrdinalIgnoreCase))
+                            StatusText.Text = handled.Substring(6).Trim();
+                        else if (handled.StartsWith("POWERCOPY", StringComparison.OrdinalIgnoreCase))
+                        {
+                            ending = "POWERCOPY";
+                            break;
+                        }
+                        else if (handled.StartsWith("CLOSE", StringComparison.OrdinalIgnoreCase))
+                        {
+                            ending = "CLOSED";
+                            break;
+                        }
+                        continue;
+                    }
+
+                    if (!alive) break;      // the user closed the dashboard window
+                }
+
+                return ending + ":" + linked + ":" + drafts;
+            }
+            finally
+            {
+                try { if (dashboard != null && !dashboard.HasExited) dashboard.CloseMainWindow(); }
+                catch { }
+                // The macro never stays on the customer's disk in clear text.
+                try { if (File.Exists(scriptPath)) File.Delete(scriptPath); }
+                catch { }
+            }
         }
 
-        /// <summary>Executes a CATScript inside CATIA on a dedicated STA thread,
-        /// so a macro that keeps CATIA busy (dashboards, measurements) never
-        /// freezes the PW toolbar and its panels.</summary>
+        /// <summary>Executes one CATScript function inside CATIA on a dedicated
+        /// STA thread (its own CATIA connection), so the PW toolbar and its
+        /// panels never freeze while CATIA works.</summary>
         private Task<string> RunCatiaScriptAsync(string scriptPath, string function, bool deleteAfterwards)
         {
             string directory = Path.GetDirectoryName(scriptPath);

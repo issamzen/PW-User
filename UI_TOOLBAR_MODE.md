@@ -49,6 +49,8 @@ CATIA** hides the library and brings CATIA to the front, so the user lands
 directly on the CATIA-side dashboard.
 
 **4 · Lifter parameters** — no window of our own
+*(CATIA stays usable while it is open: the app drives the dashboard command by
+command, see `LIFTER_INTEGRATION.md`.)*
 Runs the CATIA-side Lifter Studio dashboard again on the CATPart that is
 already open: parameters, Draft, **Boolean Remove** and the PowerCopy
 hand-off. This is the tool for the second (third, fourth...) remove operation
