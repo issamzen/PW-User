@@ -1,0 +1,93 @@
+' ==================================================================
+' PW-User toolbar TEST 3/4 - "PowerCopy library"
+' ------------------------------------------------------------------
+' Two things are tested here, and both are what the real library
+' button will have to do:
+'   1. show a branded HTA panel launched from a toolbar button
+'      (the same technique as the Lifter Studio dashboard)
+'   2. hand over to the licensed PW-User .exe when it is installed
+'      (that executable keeps the licence, the download and the
+'      decryption of the paid PowerCopies out of the macro)
+' Locked behind the session token written by button 1.
+' ==================================================================
+Option Explicit
+
+Const APP_TITLE = "PW-User - Library (test)"
+Const APP_EXE = "ProfessionalPowerCopyCatalogModern.exe"
+
+Sub CATMain()
+    On Error Resume Next
+
+    If Not SessionValid() Then
+        MsgBox "No valid session." & vbCrLf & _
+               "Click the 'PW License' button first.", vbExclamation, APP_TITLE
+        Exit Sub
+    End If
+
+    Dim fso, shell, exePath, htaPath, f
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    Set shell = CreateObject("WScript.Shell")
+
+    ' ---- 1. the licensed application, when it is installed -------
+    exePath = shell.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\Estichara\PWUser\" & APP_EXE
+    If fso.FileExists(exePath) Then
+        shell.Run """" & exePath & """", 1, False
+        MsgBox "Toolbar button 3/4 works." & vbCrLf & vbCrLf & _
+               "The licensed PW-User application was started:" & vbCrLf & exePath, _
+               vbInformation, APP_TITLE
+        Exit Sub
+    End If
+
+    ' ---- 2. fallback: prove the HTA panel opens from CATIA -------
+    htaPath = shell.ExpandEnvironmentStrings("%TEMP%") & "\PWLibraryTest.hta"
+    Set f = fso.CreateTextFile(htaPath, True, False)
+    If f Is Nothing Then
+        MsgBox "The test panel could not be written.", vbCritical, APP_TITLE
+        Exit Sub
+    End If
+
+    f.WriteLine "<html><head><title>PW-User library (test)</title>"
+    f.WriteLine "<HTA:APPLICATION BORDER='thin' CAPTION='yes' SCROLL='no' SINGLEINSTANCE='yes'>"
+    f.WriteLine "<meta http-equiv='X-UA-Compatible' content='IE=9'>"
+    f.WriteLine "<style>html,body{margin:0;font-family:'Segoe UI',Arial,sans-serif;background:#edf1f5;color:#1d2d3c;font-size:12px}"
+    f.WriteLine ".top{height:56px;background:#10222e;position:relative}"
+    f.WriteLine ".logo{position:absolute;left:18px;top:11px;width:34px;height:34px;line-height:34px;text-align:center;background:#16a7b4;color:#fff;border-radius:9px;font-size:16px;font-weight:700}"
+    f.WriteLine ".bt{position:absolute;left:64px;top:14px;color:#fff;font-size:15px;font-weight:600}"
+    f.WriteLine ".page{padding:18px 20px}.card{background:#fff;border:1px solid #dfe6ed;border-radius:12px;padding:16px}"
+    f.WriteLine ".row{border-bottom:1px solid #eef2f6;padding:8px 2px}.row b{color:#10222e}"
+    f.WriteLine ".ok{color:#2e7d4f;font-weight:600;margin-top:12px}"
+    f.WriteLine "button{border:1px solid #0f8891;background:#0f8891;color:#fff;border-radius:8px;padding:8px 14px;font-size:11px;font-weight:600;cursor:pointer}"
+    f.WriteLine "</style></head><body onload='window.resizeTo(520,420)'>"
+    f.WriteLine "<div class='top'><div class='logo'>P</div><div class='bt'>PowerCopy library</div></div>"
+    f.WriteLine "<div class='page'><div class='card'>"
+    f.WriteLine "<div class='row'><b>LF001</b> - Lifter head (demo entry)</div>"
+    f.WriteLine "<div class='row'><b>DH001</b> - Drill hole (demo entry)</div>"
+    f.WriteLine "<div class='row'><b>EJ001</b> - Ejector pin (demo entry)</div>"
+    f.WriteLine "<div class='ok'>Toolbar button 3/4 works - this panel was opened by CATIA.</div>"
+    f.WriteLine "<div style='margin-top:14px;text-align:right'><button onclick='window.close()'>Close</button></div>"
+    f.WriteLine "</div></div></body></html>"
+    f.Close
+    Err.Clear
+
+    shell.Run "mshta.exe """ & htaPath & """", 1, False
+    Err.Clear
+End Sub
+
+Function SessionValid()
+    On Error Resume Next
+    Dim fso, shell, path, stream, line, expires
+    SessionValid = False
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    Set shell = CreateObject("WScript.Shell")
+    path = shell.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\Estichara\PWUserTest\session.tok"
+    If Not fso.FileExists(path) Then Exit Function
+    Set stream = fso.OpenTextFile(path, 1, False)
+    Do While Not stream.AtEndOfStream
+        line = stream.ReadLine
+        If InStr(1, line, "EXPIRES=", 1) = 1 Then expires = Mid(line, 9)
+    Loop
+    stream.Close
+    If Len(expires) = 0 Then Exit Function
+    If CDate(expires) > Now Then SessionValid = True
+    Err.Clear
+End Function

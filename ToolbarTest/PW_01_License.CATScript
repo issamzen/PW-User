@@ -1,0 +1,64 @@
+' ==================================================================
+' PW-User toolbar TEST 1/4 - "License check"
+' ------------------------------------------------------------------
+' Purpose of this test macro: prove that a CATIA toolbar button can
+' run our code, talk to CATIA, and unlock the other three buttons.
+'
+' It does NOT contact the server yet: it writes a short lived session
+' token that the three other test macros verify. Replace the fake
+' check with the real API call (or with a call to the licensed
+' PW-User .exe) once the toolbar itself is proven to work.
+' ==================================================================
+Option Explicit
+
+Const SESSION_HOURS = 8
+Const APP_TITLE = "PW-User - License check (test)"
+
+Sub CATMain()
+    On Error Resume Next
+
+    Dim fso, shell, folder, tokenPath, stream
+    Dim release, docName, expiry
+
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    Set shell = CreateObject("WScript.Shell")
+
+    ' ---- 1. proof that the button reached CATIA -------------------
+    release = "unknown"
+    release = CATIA.SystemConfiguration.Version & " SP" & CATIA.SystemConfiguration.ServiceP
+    Err.Clear
+
+    docName = "(no document open)"
+    If CATIA.Documents.Count > 0 Then docName = CATIA.ActiveDocument.Name
+    Err.Clear
+
+    ' ---- 2. "license granted" -> write the session token ----------
+    folder = shell.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\Estichara\PWUserTest"
+    If Not fso.FolderExists(shell.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\Estichara") Then
+        fso.CreateFolder shell.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\Estichara"
+    End If
+    If Not fso.FolderExists(folder) Then fso.CreateFolder folder
+    Err.Clear
+
+    expiry = DateAdd("h", SESSION_HOURS, Now)
+    tokenPath = folder & "\session.tok"
+
+    Set stream = fso.CreateTextFile(tokenPath, True, False)
+    If stream Is Nothing Then
+        MsgBox "The session token could not be written to:" & vbCrLf & tokenPath, vbCritical, APP_TITLE
+        Exit Sub
+    End If
+    stream.WriteLine "USER=" & shell.ExpandEnvironmentStrings("%USERNAME%")
+    stream.WriteLine "MACHINE=" & shell.ExpandEnvironmentStrings("%COMPUTERNAME%")
+    stream.WriteLine "EXPIRES=" & CStr(expiry)
+    stream.Close
+    Err.Clear
+
+    MsgBox "Toolbar button 1/4 works." & vbCrLf & vbCrLf & _
+           "CATIA release : " & release & vbCrLf & _
+           "Active document : " & docName & vbCrLf & _
+           "Session token : " & tokenPath & vbCrLf & _
+           "Valid until : " & CStr(expiry) & vbCrLf & vbCrLf & _
+           "The Stroke, Library and Checker buttons are now unlocked.", _
+           vbInformation, APP_TITLE
+End Sub
