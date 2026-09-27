@@ -450,6 +450,8 @@ namespace ProfessionalPowerCopyCatalogModern
         private void PowerCopiesNavButton_OnClick(object sender, RoutedEventArgs e)
         {
             ShowLibraryWorkspace();
+            // Also brings the floating PW toolbar back when the user hid it.
+            if (_isSignedIn) ShowPwToolbar();
         }
 
         private void AboutNavButton_OnClick(object sender, RoutedEventArgs e)

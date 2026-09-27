@@ -188,9 +188,16 @@ namespace ProfessionalPowerCopyCatalogModern
             try
             {
                 IntPtr catia = FindCatiaWindow();
+
                 if (catia == IntPtr.Zero)
                 {
-                    if (IsVisible) Hide();
+                    // CATIA is not started yet: the bar stays usable (Licence and
+                    // Library work without CATIA) and parks on the right of the
+                    // desktop work area.
+                    if (!IsVisible) Show();
+                    if (_userMoved) return;
+                    Left = SystemParameters.WorkArea.Right - Width - 14;
+                    Top = SystemParameters.WorkArea.Top + 120;
                     return;
                 }
 
