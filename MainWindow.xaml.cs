@@ -38,6 +38,7 @@ namespace ProfessionalPowerCopyCatalogModern
         private string _organizationName;
         private LifterStudioWindow _lifterStudio;
         private CatalogItem _lifterSessionItem;
+        private PwToolbarWindow _pwToolbar;
 
         // Lifter (server-only) packages are wiped from this PC when the template
         // session ends, so the paid PowerCopy never stays on the customer's disk.
@@ -306,6 +307,7 @@ namespace ProfessionalPowerCopyCatalogModern
                     ? "Your account has no authorized templates."
                     : "Authorized catalog synchronized with the license server.";
                 ShowLibraryWorkspace();
+                ShowPwToolbar();
             }
             catch (Exception ex)
             {
@@ -473,6 +475,7 @@ namespace ProfessionalPowerCopyCatalogModern
             CloseSourceDocument();
             await ReleaseLeaseSilentlyAsync();
             _isSignedIn = false;
+            ClosePwToolbar();
             _api.LogoutLocal();
             CatalogItems.Clear();
             Results.Clear();
@@ -738,6 +741,122 @@ namespace ProfessionalPowerCopyCatalogModern
             {
                 UseInCatiaButton.IsEnabled = SelectedItem != null;
             }
+        }
+
+        // ================================================================
+        // PW-User floating toolbar (the four product commands, docked to
+        // the CATIA window - no CATIA customization needed on the client)
+        // ================================================================
+
+        protected override void OnClosed(EventArgs e)
+        {
+            // The floating toolbar is a second window: without this the WPF
+            // application would stay alive after the main window is closed.
+            ClosePwToolbar();
+            base.OnClosed(e);
+        }
+
+        private void ShowPwToolbar()
+        {
+            try
+            {
+                if (_pwToolbar == null)
+                {
+                    _pwToolbar = new PwToolbarWindow(
+                        PwToolbarLicense,
+                        PwToolbarStroke,
+                        PwToolbarLibrary,
+                        PwToolbarChecker);
+                    _pwToolbar.Closed += delegate { _pwToolbar = null; };
+                }
+                _pwToolbar.Show();
+            }
+            catch
+            {
+                // The toolbar is a convenience: never block the sign-in for it.
+            }
+        }
+
+        private void ClosePwToolbar()
+        {
+            try
+            {
+                if (_pwToolbar != null)
+                {
+                    _pwToolbar.Close();
+                    _pwToolbar = null;
+                }
+            }
+            catch { }
+        }
+
+        /// <summary>Toolbar 1/4 - licence: brings up the account panel and
+        /// refreshes the seat information from the server.</summary>
+        private async void PwToolbarLicense()
+        {
+            Show();
+            WindowState = WindowState.Normal;
+            Activate();
+            AboutNavButton_OnClick(this, null);
+            try { await RefreshLicenseDisplayAsync(); }
+            catch (Exception ex) { StatusText.Text = FriendlyApiError(ex.Message); }
+        }
+
+        /// <summary>Toolbar 2/4 - stroke: runs the STROKE_Distance script
+        /// inside CATIA on the active CATPart.</summary>
+        private void PwToolbarStroke()
+        {
+            if (!EnsureCatiaConnection())
+                throw new InvalidOperationException("CATIA is not running.");
+            if (!(_catia.ActiveDocument is MECMOD.PartDocument))
+                throw new InvalidOperationException(
+                    "Open (or activate) the destination CATPart in CATIA first.");
+
+            string scriptPath = LifterEngine.WriteStrokeSetupScript();
+            object raw = _catia.SystemService.ExecuteScript(
+                Path.GetDirectoryName(scriptPath),
+                INFITF.CatScriptLibraryType.catScriptLibraryTypeDirectory,
+                Path.GetFileName(scriptPath),
+                "CATMain",
+                new object[0]);
+            string result = raw == null ? string.Empty : raw.ToString().Trim();
+
+            if (result.StartsWith("ERROR:", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException(result.Substring(6).Trim());
+
+            string message;
+            if (result.StartsWith("EXISTS:", StringComparison.OrdinalIgnoreCase))
+                message = "STROKE_Distance = " + result.Substring(7) + " mm (already on the CATPart).";
+            else if (result.StartsWith("CREATED:", StringComparison.OrdinalIgnoreCase))
+                message = "STROKE_Distance = " + result.Substring(8) + " mm created.";
+            else if (string.Equals(result, "CANCELLED", StringComparison.OrdinalIgnoreCase))
+                message = "Stroke setup cancelled.";
+            else
+                message = result;
+
+            StatusText.Text = message;
+            MessageBox.Show(message, "PW-User - Stroke", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        /// <summary>Toolbar 3/4 - library: the licensed catalog.</summary>
+        private void PwToolbarLibrary()
+        {
+            Show();
+            WindowState = WindowState.Normal;
+            Activate();
+            ShowLibraryWorkspace();
+        }
+
+        /// <summary>Toolbar 4/4 - checker: the integrated feasibility check
+        /// of the selected template against the destination CATPart.</summary>
+        private void PwToolbarChecker()
+        {
+            Show();
+            WindowState = WindowState.Normal;
+            Activate();
+            if (SelectedItem == null)
+                throw new InvalidOperationException("Select a template in the library first.");
+            RunCheckButton_OnClick(this, null);
         }
 
         private static void ApplyPreparedPackage(CatalogItem item, PreparedPackage package)

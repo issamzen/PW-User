@@ -1,0 +1,222 @@
+' ==================================================================
+' PW-User toolbar TEST 2/4 - "Stroke tool"
+' ------------------------------------------------------------------
+' Real work, minimal version: detects the main body, measures the
+' bounding box width (Y direction) and creates / updates the
+' STROKE_Distance parameter on the active CATPart.
+' Locked behind the session token written by button 1.
+' ==================================================================
+Option Explicit
+
+Const STROKE_NAME = "STROKE_Distance"
+Const TEMP_SET = "TEMP_STROKE"
+Const APP_TITLE = "PW-User - Stroke tool (test)"
+
+Sub CATMain()
+    On Error Resume Next
+
+    If Not SessionValid() Then
+        MsgBox "No valid session." & vbCrLf & _
+               "Click the 'PW License' button first.", vbExclamation, APP_TITLE
+        Exit Sub
+    End If
+
+    If CATIA.Documents.Count = 0 Then
+        MsgBox "Open a CATPart first.", vbExclamation, APP_TITLE
+        Exit Sub
+    End If
+    If TypeName(CATIA.ActiveDocument) <> "PartDocument" Then
+        MsgBox "The active document must be a CATPart.", vbExclamation, APP_TITLE
+        Exit Sub
+    End If
+
+    Dim doc, part, body, width, existing
+    Set doc = CATIA.ActiveDocument
+    Set part = doc.Part
+
+    Set body = DetectMainBody(part, doc)
+    If body Is Nothing Then Set body = PickBody(doc)
+    If body Is Nothing Then
+        MsgBox "No body selected - nothing was changed.", vbExclamation, APP_TITLE
+        Exit Sub
+    End If
+
+    width = MeasureStroke(part, doc, body)
+    If width < 0 Then
+        MsgBox "The body could not be measured.", vbCritical, APP_TITLE
+        Exit Sub
+    End If
+
+    Set existing = Nothing
+    Err.Clear
+    Set existing = part.Parameters.Item(STROKE_NAME)
+    Err.Clear
+    If existing Is Nothing Then
+        part.Parameters.CreateDimension STROKE_NAME, "LENGTH", width
+    Else
+        existing.Value = width
+    End If
+    If Err.Number <> 0 Then
+        MsgBox "Could not write " & STROKE_NAME & ": " & Err.Description, vbCritical, APP_TITLE
+        Err.Clear
+        Exit Sub
+    End If
+    part.Update
+    Err.Clear
+
+    MsgBox "Toolbar button 2/4 works." & vbCrLf & vbCrLf & _
+           "Body measured : " & body.Name & vbCrLf & _
+           STROKE_NAME & " = " & FormatNumber(width, 3) & " mm", _
+           vbInformation, APP_TITLE
+End Sub
+
+'-------------------------------------------------------------- session
+Function SessionValid()
+    On Error Resume Next
+    Dim fso, shell, path, stream, line, expires
+    SessionValid = False
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    Set shell = CreateObject("WScript.Shell")
+    path = shell.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\Estichara\PWUserTest\session.tok"
+    If Not fso.FileExists(path) Then Exit Function
+    Set stream = fso.OpenTextFile(path, 1, False)
+    Do While Not stream.AtEndOfStream
+        line = stream.ReadLine
+        If InStr(1, line, "EXPIRES=", 1) = 1 Then expires = Mid(line, 9)
+    Loop
+    stream.Close
+    If Len(expires) = 0 Then Exit Function
+    If CDate(expires) > Now Then SessionValid = True
+    Err.Clear
+End Function
+
+'-------------------------------------------------------------- geometry
+Function DetectMainBody(part, doc)
+    On Error Resume Next
+    Dim b
+    Set DetectMainBody = Nothing
+    Set b = Nothing
+    Set b = part.MainBody
+    If Err.Number = 0 And Not b Is Nothing Then
+        Set DetectMainBody = b
+        Exit Function
+    End If
+    Err.Clear
+    Set b = Nothing
+    Set b = part.Bodies.Item(1)
+    If Err.Number = 0 And Not b Is Nothing Then Set DetectMainBody = b
+    Err.Clear
+End Function
+
+Function PickBody(doc)
+    On Error Resume Next
+    Dim filter(0), status
+    Set PickBody = Nothing
+    filter(0) = "Body"
+    Err.Clear
+    status = doc.Selection.SelectElement2(filter, "Select the MAIN body for " & STROKE_NAME, False)
+    If Err.Number <> 0 Then Exit Function
+    If status <> "Normal" Then Exit Function
+    If doc.Selection.Count2 > 0 Then
+        Set PickBody = doc.Selection.Item2(1).Value
+        doc.Selection.Clear
+    End If
+    Err.Clear
+End Function
+
+Function MeasureStroke(part, doc, body)
+    On Error Resume Next
+    Dim hsf, spa, gs, refBody
+    Dim lineX, lineY, lineZ, extMax, extMin, planeMax, planeMin
+    Dim meas, w
+
+    MeasureStroke = -1
+    Set hsf = part.HybridShapeFactory
+    Set spa = doc.GetWorkbench("SPAWorkbench")
+    If hsf Is Nothing Or spa Is Nothing Then Exit Function
+
+    DeleteGeoSet part, doc, TEMP_SET
+
+    Err.Clear
+    Set gs = part.HybridBodies.Add()
+    If Err.Number <> 0 Then Exit Function
+    gs.Name = TEMP_SET
+    Err.Clear
+
+    Set refBody = part.CreateReferenceFromObject(body)
+
+    Set lineX = hsf.AddNewLinePtPt(hsf.AddNewPointCoord(-10000, 0, 0), hsf.AddNewPointCoord(10000, 0, 0))
+    Set lineY = hsf.AddNewLinePtPt(hsf.AddNewPointCoord(0, -10000, 0), hsf.AddNewPointCoord(0, 10000, 0))
+    Set lineZ = hsf.AddNewLinePtPt(hsf.AddNewPointCoord(0, 0, -10000), hsf.AddNewPointCoord(0, 0, 10000))
+    gs.AppendHybridShape lineX
+    gs.AppendHybridShape lineY
+    gs.AppendHybridShape lineZ
+
+    Set extMax = BuildBoxExtremum(hsf, refBody, 1, lineY, lineZ, lineX)
+    Set extMin = BuildBoxExtremum(hsf, refBody, 0, lineY, lineZ, lineX)
+    gs.AppendHybridShape extMax
+    gs.AppendHybridShape extMin
+
+    Set planeMax = hsf.AddNewPlaneNormal(lineY, extMax)
+    Set planeMin = hsf.AddNewPlaneNormal(lineY, extMin)
+    gs.AppendHybridShape planeMax
+    gs.AppendHybridShape planeMin
+
+    Err.Clear
+    part.Update
+    If Err.Number <> 0 Then
+        Err.Clear
+        DeleteGeoSet part, doc, TEMP_SET
+        Exit Function
+    End If
+
+    w = -1
+    Set meas = spa.GetMeasurable(planeMax)
+    If Err.Number = 0 And Not meas Is Nothing Then
+        Err.Clear
+        w = meas.GetMinimumDistance(planeMin)
+        If Err.Number <> 0 Then w = -1
+    End If
+    Err.Clear
+
+    DeleteGeoSet part, doc, TEMP_SET
+    part.Update
+    Err.Clear
+
+    If w >= 0 Then MeasureStroke = w
+End Function
+
+Function BuildBoxExtremum(hsf, refBody, minMax, dir1, dir2, dir3)
+    On Error Resume Next
+    Dim d1, d2, d3, ext
+    Set d1 = hsf.AddNewDirection(dir1)
+    Set d2 = hsf.AddNewDirection(dir2)
+    Set d3 = hsf.AddNewDirection(dir3)
+    Set ext = hsf.AddNewExtremum(refBody, d1, minMax)
+    ext.Direction2 = d2
+    ext.ExtremumType2 = 1
+    ext.Direction3 = d3
+    ext.ExtremumType3 = 1
+    ext.Compute
+    Set BuildBoxExtremum = ext
+End Function
+
+Sub DeleteGeoSet(part, doc, setName)
+    On Error Resume Next
+    Dim selection, i, gs
+    Set selection = doc.Selection
+    For i = 1 To 50
+        Set gs = Nothing
+        Err.Clear
+        Set gs = part.HybridBodies.Item(setName)
+        If gs Is Nothing Then Exit For
+        Err.Clear
+        selection.Clear
+        selection.Add gs
+        selection.Delete
+        selection.Clear
+    Next
+    Err.Clear
+    part.Update
+    Err.Clear
+End Sub

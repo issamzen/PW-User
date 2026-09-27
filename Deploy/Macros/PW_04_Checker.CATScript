@@ -1,0 +1,116 @@
+' ==================================================================
+' PW-User toolbar TEST 4/4 - "Checker"
+' ------------------------------------------------------------------
+' Minimal feasibility check between the PowerCopy body and the main
+' CATPart body, WITHOUT the DMU Space Analysis licence:
+'   * SPAWorkbench measures the minimum distance between the two
+'     bodies  -> clearance
+'   * distance = 0 means contact / interference
+' The real checker will add the intersection volume test; this test
+' only proves the toolbar button can drive a measure inside CATIA.
+' Locked behind the session token written by button 1.
+' ==================================================================
+Option Explicit
+
+Const APP_TITLE = "PW-User - Checker (test)"
+Const CLASH_TOL = 0.001          ' mm - below this the bodies touch
+
+Sub CATMain()
+    On Error Resume Next
+
+    If Not SessionValid() Then
+        MsgBox "No valid session." & vbCrLf & _
+               "Click the 'PW License' button first.", vbExclamation, APP_TITLE
+        Exit Sub
+    End If
+
+    If CATIA.Documents.Count = 0 Then
+        MsgBox "Open a CATPart first.", vbExclamation, APP_TITLE
+        Exit Sub
+    End If
+    If TypeName(CATIA.ActiveDocument) <> "PartDocument" Then
+        MsgBox "The active document must be a CATPart.", vbExclamation, APP_TITLE
+        Exit Sub
+    End If
+
+    Dim doc, part, spa
+    Dim bodyA, bodyB, refA, refB, meas, distance, verdict
+
+    Set doc = CATIA.ActiveDocument
+    Set part = doc.Part
+    Set spa = doc.GetWorkbench("SPAWorkbench")
+    If spa Is Nothing Then
+        MsgBox "SPAWorkbench is not available on this CATIA seat.", vbCritical, APP_TITLE
+        Exit Sub
+    End If
+
+    Set bodyA = PickBody(doc, "Select the FIRST body (e.g. the PowerCopy body)")
+    If bodyA Is Nothing Then Exit Sub
+    Set bodyB = PickBody(doc, "Select the SECOND body (e.g. the main CATPart body)")
+    If bodyB Is Nothing Then Exit Sub
+
+    Set refA = part.CreateReferenceFromObject(bodyA)
+    Set refB = part.CreateReferenceFromObject(bodyB)
+
+    distance = -1
+    Err.Clear
+    Set meas = spa.GetMeasurable(refA)
+    If Err.Number = 0 And Not meas Is Nothing Then
+        Err.Clear
+        distance = meas.GetMinimumDistance(refB)
+        If Err.Number <> 0 Then distance = -1
+    End If
+    Err.Clear
+
+    If distance < 0 Then
+        MsgBox "The distance between the two bodies could not be measured.", vbCritical, APP_TITLE
+        Exit Sub
+    End If
+
+    If distance <= CLASH_TOL Then
+        verdict = "CLASH / CONTACT - the two bodies touch or interfere."
+    Else
+        verdict = "NO CLASH - clearance = " & FormatNumber(distance, 3) & " mm"
+    End If
+
+    MsgBox "Toolbar button 4/4 works." & vbCrLf & vbCrLf & _
+           "Body 1 : " & bodyA.Name & vbCrLf & _
+           "Body 2 : " & bodyB.Name & vbCrLf & vbCrLf & _
+           verdict, vbInformation, APP_TITLE
+End Sub
+
+Function PickBody(doc, prompt)
+    On Error Resume Next
+    Dim filter(0), status
+    Set PickBody = Nothing
+    filter(0) = "Body"
+    doc.Selection.Clear
+    Err.Clear
+    status = doc.Selection.SelectElement2(filter, prompt, False)
+    If Err.Number <> 0 Then Exit Function
+    If status <> "Normal" Then Exit Function
+    If doc.Selection.Count2 > 0 Then
+        Set PickBody = doc.Selection.Item2(1).Value
+        doc.Selection.Clear
+    End If
+    Err.Clear
+End Function
+
+Function SessionValid()
+    On Error Resume Next
+    Dim fso, shell, path, stream, line, expires
+    SessionValid = False
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    Set shell = CreateObject("WScript.Shell")
+    path = shell.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\Estichara\PWUserTest\session.tok"
+    If Not fso.FileExists(path) Then Exit Function
+    Set stream = fso.OpenTextFile(path, 1, False)
+    Do While Not stream.AtEndOfStream
+        line = stream.ReadLine
+        If InStr(1, line, "EXPIRES=", 1) = 1 Then expires = Mid(line, 9)
+    Loop
+    stream.Close
+    If Len(expires) = 0 Then Exit Function
+    If CDate(expires) > Now Then SessionValid = True
+    Err.Clear
+End Function
