@@ -268,6 +268,20 @@ namespace ProfessionalPowerCopyCatalogModern
         // Measurement flow
         // ------------------------------------------------------------------
 
+        /// <summary>Friendly CATIA error text with the raw HRESULT code, so a
+        /// screenshot is enough to pinpoint the failing automation call.</summary>
+        private static string Describe(Exception ex)
+        {
+            if (ex == null) return "Unknown error.";
+            string text = LifterEngine.FriendlyCatiaError(ex);
+            try
+            {
+                text += "  (HRESULT 0x" + ((uint)ex.HResult).ToString("X8") + ")";
+            }
+            catch { }
+            return text;
+        }
+
         private void DetectAndMeasure()
         {
             if (_part == null)
@@ -286,10 +300,14 @@ namespace ProfessionalPowerCopyCatalogModern
                 _detectDot.Fill = LifterUi.Danger;
                 _detectText.Text = "No main body found — use 'Choose another body'.";
                 string reason = detectError != null
-                    ? LifterEngine.FriendlyCatiaError(detectError)
+                    ? Describe(detectError)
                     : "This CATPart contains no solid Body to measure.";
-                Fail("The main body could not be detected.\n" + reason
-                     + "\n\nIf a CATIA dialog is open (e.g. Insert Object), close it and click Retry — or pick the body manually.");
+                Fail("The main body could not be detected on " +
+                     (string.IsNullOrEmpty(_documentName) ? "the destination CATPart" : _documentName) + ".\n" + reason
+                     + "\n\nChecklist:\n" +
+                     "1. The CATPart must be open in DESIGN mode (conception), not visualization mode.\n" +
+                     "2. Close any open CATIA dialog, then click Retry.\n" +
+                     "3. Or click 'Choose another body' and pick the main body manually.");
                 return;
             }
 
@@ -310,9 +328,13 @@ namespace ProfessionalPowerCopyCatalogModern
             else
             {
                 string reason = measureError != null
-                    ? LifterEngine.FriendlyCatiaError(measureError)
+                    ? Describe(measureError)
                     : "The body could not be measured (it may be empty).";
-                Fail(reason + "\n\nIf a CATIA dialog is open, close it and click Retry — or choose another body.");
+                Fail(reason
+                     + "\n\nChecklist:\n" +
+                     "1. Close any open CATIA dialog, then click Retry.\n" +
+                     "2. Make sure the destination CATPart is open in DESIGN mode (conception).\n" +
+                     "3. Or click 'Choose another body' and pick a body with geometry.");
             }
         }
 

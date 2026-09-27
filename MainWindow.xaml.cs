@@ -523,7 +523,10 @@ namespace ProfessionalPowerCopyCatalogModern
             try
             {
                 _catia = (INFITF.Application)Marshal.GetActiveObject("CATIA.Application");
-                _destination = (MECMOD.PartDocument)_catia.ActiveDocument;
+                // A running CATIA with no document open is still a valid
+                // connection - do not treat the missing document as "offline".
+                try { _destination = (MECMOD.PartDocument)_catia.ActiveDocument; }
+                catch { _destination = null; }
 
                 ConnectionPill.Background = BrushFrom("#DCFCE7");
                 ConnectionDot.Fill = BrushFrom("#16A34A");
@@ -547,13 +550,34 @@ namespace ProfessionalPowerCopyCatalogModern
             }
         }
 
+        /// <summary>Returns true when a live CATIA connection is available.
+        /// If CATIA was closed and restarted since the last connection, the old
+        /// COM proxy points to a dead process and every call would fail with an
+        /// HRESULT error - this detects it and re-attaches automatically.</summary>
+        private bool EnsureCatiaConnection()
+        {
+            if (_catia != null)
+            {
+                try
+                {
+                    INFITF.Document probe = _catia.ActiveDocument; // liveness probe
+                    return true;
+                }
+                catch
+                {
+                    _catia = null; // stale proxy from a previous CATIA session
+                }
+            }
+            ConnectToCatia();
+            return _catia != null;
+        }
+
         private async void UseInCatiaButton_OnClick(object sender, RoutedEventArgs e)
         {
             try
             {
                 if (SelectedItem == null) throw new InvalidOperationException("Select a catalog item.");
-                if (_catia == null) ConnectToCatia();
-                if (_catia == null) return;
+                if (!EnsureCatiaConnection()) return;
 
                 bool isLifter = IsLifterTemplate(SelectedItem);
                 if (isLifter)
@@ -844,8 +868,7 @@ namespace ProfessionalPowerCopyCatalogModern
             try
             {
                 if (SelectedItem == null) throw new InvalidOperationException("Select a catalog item.");
-                if (_catia == null) ConnectToCatia();
-                if (_catia == null) return;
+                if (!EnsureCatiaConnection()) return;
 
                 if (!(_catia.ActiveDocument is MECMOD.PartDocument))
                     throw new InvalidOperationException(

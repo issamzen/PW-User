@@ -332,6 +332,26 @@ namespace ProfessionalPowerCopyCatalogModern
                 if (TryCount(bodies) > 0) return bodies.Item(1);
             }
             catch (Exception ex) { error = ex; }
+
+            // Last resort: enumerate the bodies through the document
+            // Selection.Search. This also works when the part's design
+            // collections reject COM calls (e.g. a document that was not
+            // loaded with its full design data).
+            try
+            {
+                dynamic document = part.Parent;
+                dynamic selection = document.Selection;
+                selection.Clear();
+                selection.Search("'Part Design'.Body,all");
+                if (TryCount(selection) > 0)
+                {
+                    dynamic body = selection.Item(1).Value;
+                    selection.Clear();
+                    return body;
+                }
+                selection.Clear();
+            }
+            catch (Exception ex) { error = ex; }
             return null;
         }
 
