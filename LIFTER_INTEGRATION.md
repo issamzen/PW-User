@@ -26,14 +26,21 @@ project always compiles the same way.
 
 ```
 Use in CATIA  (template flagged Workflow = "lifter")
- ├─ 1. License lease from the server (unchanged)
- ├─ 2. Encrypted package download from Hostinger (unchanged: SHA-256 check,
+ ├─ 1. STEP 1 — read STROKE_Distance on the destination CATPart (direct COM,
+ │     the C# port of the macro's first-run script) BEFORE any license seat
+ │     is taken or anything is downloaded:
+ │      • exists → the dashboard reports its value and continues to step 2
+ │      • missing → LifterSetupWindow (measure bbox W of the main body,
+ │        Retry / pick another body / Continue / Cancel)
+ │      • Cancel → the whole flow aborts: nothing leased, nothing downloaded
+ ├─ 2. License lease from the server (unchanged)
+ ├─ 3. Encrypted package download from Hostinger (unchanged: SHA-256 check,
  │     PCPK decryption, extraction to the package cache)
- ├─ 3. NO local development fallback — the PowerCopy always comes from the
+ │     NO local development fallback — the PowerCopy always comes from the
  │     licensed server package
  ├─ 4. Lifter pre-flight on the destination CATPart:
- │      • STROKE_Distance missing → LifterSetupWindow (measure bbox W of the
- │        main body, Retry / pick another body / Continue / Cancel)
+ │      • STROKE_Distance re-checked (safety net for the case where the
+ │        workflow flag arrived only with the package manifest)
  │      • LinkStrokeToMainBody  — every instance's STROKE_Distance is driven
  │        by the root value (single source of truth)
  │      • CreateDraftParameters — Draft = min(floor(atan((UNDERCUT_LENGTH+5mm)
@@ -224,8 +231,11 @@ After fixing: close Visual Studio, delete the `.vs`, `bin` and `obj` folders
    development and point its paths at your dev files.
 2. Open CATIA with a destination CATPart (with at least one Body).
 3. Select the lifter card → **Use in CATIA**:
-   - first run shows the setup panel and measures STROKE_Distance;
-   - the template opens, the Insert Object dialog starts,
+   - step 1 (before any license/download): if STROKE_Distance is missing, the
+     setup panel appears immediately and measures it; if it exists, its value
+     shows in the status bar and the flow continues;
+   - the lease + package download run, the template opens, the Insert Object
+     dialog starts,
    - Lifter Studio opens ("Complete CATIA's Insert Object dialog…").
 4. Complete the insertion in CATIA → **Refresh instances** in Lifter Studio →
    the new instance appears, its STROKE_Distance is linked to the root value

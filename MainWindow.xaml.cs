@@ -516,8 +516,30 @@ namespace ProfessionalPowerCopyCatalogModern
                 if (_catia == null) return;
 
                 bool isLifter = IsLifterTemplate(SelectedItem);
-                if (isLifter && !(_catia.ActiveDocument is MECMOD.PartDocument))
-                    throw new InvalidOperationException("The active CATIA document must be a CATPart before using a lifter template.");
+                if (isLifter)
+                {
+                    // ============================================================
+                    // STEP 1 of the lifter workflow — BEFORE any license seat is
+                    // taken or any package is downloaded: read STROKE_Distance
+                    // on the destination CATPart (direct COM call, the C# port
+                    // of the macro's first-run script). If it is missing, the
+                    // one-time measurement setup runs now; cancelling aborts
+                    // the whole flow with nothing leased and nothing downloaded.
+                    // ============================================================
+                    if (!(_catia.ActiveDocument is MECMOD.PartDocument))
+                        throw new InvalidOperationException(
+                            "Open (or activate) the destination CATPart in CATIA first — the lifter workflow reads and creates STROKE_Distance on it.");
+                    _destination = (MECMOD.PartDocument)_catia.ActiveDocument;
+
+                    UseInCatiaButton.IsEnabled = false;
+                    StatusText.Text = "Checking STROKE_Distance on the destination CATPart…";
+
+                    if (!EnsureStrokeDistance())
+                    {
+                        StatusText.Text = "Lifter setup cancelled — no license seat was used, nothing was downloaded.";
+                        return;
+                    }
+                }
 
                 UseInCatiaButton.IsEnabled = false;
                 StatusText.Text = "Requesting a license seat…";
@@ -606,18 +628,37 @@ namespace ProfessionalPowerCopyCatalogModern
                 }
 
                 StatusText.Text = "Package ready. Opening the CATIA template…";
-                _destination = (MECMOD.PartDocument)_catia.ActiveDocument;
+                if (!isLifter)
+                {
+                    // Non-lifter flow: always capture the active document (as before).
+                    _destination = (MECMOD.PartDocument)_catia.ActiveDocument;
+                }
+                else if (_destination == null)
+                {
+                    // Lifter flag arrived only now with the package manifest: no
+                    // early check ran, so validate the destination document now.
+                    if (!(_catia.ActiveDocument is MECMOD.PartDocument))
+                        throw new InvalidOperationException(
+                            "Open (or activate) the destination CATPart in CATIA first — the lifter workflow reads and creates STROKE_Distance on it.");
+                    _destination = (MECMOD.PartDocument)_catia.ActiveDocument;
+                }
 
                 if (isLifter)
                 {
-                    // Lifter workflow (catvba port): one-time STROKE_Distance
-                    // measurement on the destination part + STROKE link and Draft
-                    // formula fix-up, before the template document opens.
+                    // Lifter workflow (catvba port): STROKE link and Draft
+                    // formula fix-up on the destination part, before the
+                    // template document opens (STROKE_Distance itself was
+                    // ensured at step 1, right after the click).
                     _lifterSessionItem = SelectedItem;
-                    StatusText.Text = "Preparing lifter parameters (STROKE_Distance + Draft)…";
+                    StatusText.Text = "Preparing lifter parameters (STROKE_Distance link + Draft)…";
                     LifterPreFlightResult preFlight = RunLifterPreFlight();
                     if (!preFlight.Ok)
                         throw new InvalidOperationException(preFlight.Error);
+                    StatusText.Text = string.Format(
+                        "Lifter parameters ready — STROKE linked ({0} instance{1}), Draft formulas ensured ({2}).",
+                        preFlight.Linked,
+                        preFlight.Linked == 1 ? "" : "s",
+                        preFlight.Drafts);
                 }
 
                 _source = (MECMOD.PartDocument)_catia.Documents.Open(SelectedItem.CatPartPath);
@@ -685,6 +726,42 @@ namespace ProfessionalPowerCopyCatalogModern
         /// the CATMain of the macro: measure STROKE_Distance when missing (branded
         /// setup dialog with retry / manual body pick), then link every instance's
         /// STROKE_Distance to the root value and (re)create the Draft formulas.</summary>
+        /// <summary>Step 1 of the lifter workflow, executed right after the
+        /// "Use in CATIA" click and BEFORE any license seat or package
+        /// download: reads STROKE_Distance on the destination CATPart. When it
+        /// is missing, the one-time measurement setup window runs (measure the
+        /// main body bounding box width / pick another body). Returns false
+        /// when the user cancels — the whole flow stops with nothing leased
+        /// and nothing downloaded.</summary>
+        private bool EnsureStrokeDistance()
+        {
+            dynamic part = _destination.Part;
+
+            if (LifterEngine.StrokeParameterExists(part))
+            {
+                string current = LifterEngine.GetStrokeText(part);
+                StatusText.Text = string.IsNullOrEmpty(current)
+                    ? "STROKE_Distance found on the destination CATPart — continuing to the PowerCopy."
+                    : "STROKE_Distance = " + current + " mm — continuing to the PowerCopy.";
+                return true;
+            }
+
+            var setup = new LifterSetupWindow(_catia, _destination) { Owner = this };
+            bool? dialogResult = setup.ShowDialog();
+            if (dialogResult != true) return false;
+
+            if (!LifterEngine.StrokeParameterExists(part))
+                throw new InvalidOperationException(
+                    "STROKE_Distance is still missing on the destination CATPart. " +
+                    "Retry the measurement or choose another body, then continue.");
+
+            string created = LifterEngine.GetStrokeText(part);
+            StatusText.Text = string.IsNullOrEmpty(created)
+                ? "STROKE_Distance created — continuing to the PowerCopy."
+                : "STROKE_Distance created (" + created + " mm) — continuing to the PowerCopy.";
+            return true;
+        }
+
         private LifterPreFlightResult RunLifterPreFlight()
         {
             var result = new LifterPreFlightResult();
@@ -694,9 +771,13 @@ namespace ProfessionalPowerCopyCatalogModern
 
                 if (!LifterEngine.StrokeParameterExists(part))
                 {
+                    // Safety net: the workflow flag can arrive with the package
+                    // manifest (after the download), in which case the early
+                    // check at click time did not run — offer the one-time
+                    // setup now.
                     var setup = new LifterSetupWindow(_catia, _destination) { Owner = this };
                     bool? dialogResult = setup.ShowDialog();
-                    if (dialogResult != true)
+                    if (dialogResult != true || !LifterEngine.StrokeParameterExists(part))
                     {
                         result.Error = "STROKE_Distance setup was cancelled. The lifter workflow needs it.";
                         return result;

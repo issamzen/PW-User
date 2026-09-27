@@ -288,7 +288,7 @@ namespace ProfessionalPowerCopyCatalogModern
             }
             else
             {
-                Fail("The body could not be measured. Retry, pick another body, or continue without STROKE_Distance.");
+                Fail("The body could not be measured. Retry, or choose another body.");
             }
         }
 
@@ -326,7 +326,10 @@ namespace ProfessionalPowerCopyCatalogModern
             _resultOk.Visibility = Visibility.Collapsed;
             _resultFail.Visibility = Visibility.Visible;
             _failText.Text = message;
-            _continueButton.IsEnabled = true;      // continue without STROKE_Distance is allowed
+            // STROKE_Distance is mandatory for the lifter workflow (single
+            // source of truth for every instance) — the only ways out of a
+            // failed measurement are Retry, choosing another body, or Cancel.
+            _continueButton.IsEnabled = false;
             _retryButton.Visibility = Visibility.Visible;
             _topDot.Fill = LifterUi.Danger;
             _topText.Text = "Failed";
