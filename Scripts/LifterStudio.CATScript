@@ -1701,7 +1701,9 @@ Sub UpdateValues(part, data, rsp, instanceIndex)
         Set a = FindDirect(undercutSet, p1)
         Set b = FindDirect(undercutSet, p2)
         Set c = FindDirect(undercutSet, P3)
-        Set d = FindDirect(undercutSet, P4)
+        ' HAS_EXTERNAL_FACE is not always stored in the UNDERCUT set: look in
+        ' the LIFTER_HEAD set and then anywhere in the part before giving up.
+        Set d = FindInstanceParam(part, undercutSet, headSet, P4, instanceIndex)
         Set e = FindDirect(headSet, P5)
         If a Is Nothing Or b Is Nothing Or c Is Nothing Then problem = "An UNDERCUT_DEPTH parameter is missing."
         If (d Is Nothing Or e Is Nothing) And Len(problem) = 0 Then problem = "HAS_EXTERNAL_FACE or UNDERCUT_LENGTH is missing."
@@ -1718,7 +1720,9 @@ Sub UpdateValues(part, data, rsp, instanceIndex)
     problem = SetDimension(a, ReadKey(data, p1), "mm")
     If Len(problem) = 0 Then problem = SetDimension(b, ReadKey(data, p2), "deg")
     If Len(problem) = 0 Then problem = SetDimension(c, ReadKey(data, P3), "deg")
-    If Len(problem) = 0 Then problem = SetBooleanValue(d, ReadKey(data, P4))
+    Dim wantedBool
+    wantedBool = (LCase(Trim(ReadKey(data, P4))) = "true")
+    If Len(problem) = 0 Then problem = SetBooleanValue(part, d, ReadKey(data, P4))
     If Len(problem) = 0 Then problem = SetDimension(e, ReadKey(data, P5), "mm")
 
     If Len(problem) = 0 Then
@@ -1729,11 +1733,23 @@ Sub UpdateValues(part, data, rsp, instanceIndex)
         End If
     End If
 
+    ' The update itself can revert a Boolean that is driven by a rule or a
+    ' formula: check the value that really survived and say so.
+    If Len(problem) = 0 Then
+        If BoolValueOf(d) <> wantedBool Then
+            problem = "CATIA reset " & P4 & " to " & LCase(CStr(BoolValueOf(d))) & _
+                      " during the update. It is driven by a formula, a rule or a design table."
+        End If
+    End If
+
     CATIA.RefreshDisplay = True
     Err.Clear
 
     If Len(problem) > 0 Then
         MsgBox "Parameter update failed." & vbCrLf & problem, vbCritical, APP_TITLE
+        ' Re-send the real values so the dashboard never shows a state the
+        ' CATPart does not have (a Boolean that CATIA refused, for example).
+        SendValues part, rsp, instanceIndex
         Exit Sub
     End If
 
@@ -1759,31 +1775,95 @@ Function SetDimension(parameter, rawValue, unitName)
     End If
 End Function
 
-Function SetBooleanValue(parameter, rawValue)
+'------------------------------------------------------------------
+' Writing a CATIA Boolean parameter is not a single call that always
+' works: the property assignment can be silently ignored, and a
+' formula driving the parameter always wins. Every attempt is
+' therefore verified by reading the value back.
+'------------------------------------------------------------------
+Function SetBooleanValue(part, parameter, rawValue)
     On Error Resume Next
-    Dim text, value, message
+    Dim text, wanted, message, relation, attempt
+
     SetBooleanValue = ""
+    If parameter Is Nothing Then
+        SetBooleanValue = P4 & " was not found on this instance."
+        Exit Function
+    End If
+
     text = LCase(Trim(rawValue))
     If text = "true" Then
-        value = True
+        wanted = True
     ElseIf text = "false" Then
-        value = False
+        wanted = False
     Else
         SetBooleanValue = "Invalid Boolean value."
         Exit Function
     End If
 
+    If BoolValueOf(parameter) = wanted Then Exit Function      ' nothing to do
+
+    ' A formula on the parameter cannot be overridden by a value.
+    Set relation = Nothing
     Err.Clear
-    parameter.Value = value
-    If Err.Number = 0 Then Exit Function
+    Set relation = GetFormulaFor(part.Relations, parameter)
+    Err.Clear
+    If Not relation Is Nothing Then
+        SetBooleanValue = P4 & " is driven by the formula """ & CStr(relation.Name) & _
+                          """ - delete or deactivate that formula to steer it from the dashboard."
+        Exit Function
+    End If
+
+    ' 1) the normal way
+    Err.Clear
+    parameter.Value = wanted
+    message = Err.Description
+    Err.Clear
+    If BoolValueOf(parameter) = wanted Then Exit Function
+
+    ' 2) string valuation, in the spellings CATIA accepts
+    For attempt = 1 To 3
+        Err.Clear
+        If attempt = 1 Then parameter.ValuateFromString text
+        If attempt = 2 Then parameter.ValuateFromString UCase(Left(text, 1)) & Mid(text, 2)
+        If attempt = 3 Then
+            If wanted Then
+                parameter.ValuateFromString "1"
+            Else
+                parameter.ValuateFromString "0"
+            End If
+        End If
+        If Len(Err.Description) > 0 Then message = Err.Description
+        Err.Clear
+        If BoolValueOf(parameter) = wanted Then Exit Function
+    Next
+
+    SetBooleanValue = P4 & " could not be set to " & text & _
+                      " (CATIA keeps " & LCase(CStr(BoolValueOf(parameter))) & ")."
+    If Len(message) > 0 Then SetBooleanValue = SetBooleanValue & " " & message
+End Function
+
+'------------------------------------------------------------------
+' Reads a CATIA Boolean parameter whatever its flavour.
+'------------------------------------------------------------------
+Function BoolValueOf(parameter)
+    On Error Resume Next
+    Dim v, s
+    BoolValueOf = False
+    If parameter Is Nothing Then Exit Function
 
     Err.Clear
-    parameter.ValuateFromString text
-    If Err.Number <> 0 Then
-        message = Err.Description
+    v = parameter.Value
+    If Err.Number = 0 Then
         Err.Clear
-        SetBooleanValue = "HAS_EXTERNAL_FACE could not be updated. " & message
+        BoolValueOf = CBool(v)
+        If Err.Number = 0 Then Exit Function
     End If
+
+    Err.Clear
+    s = LCase(Trim(CStr(parameter.ValueAsString)))
+    Err.Clear
+    BoolValueOf = (s = "true" Or s = "1" Or s = "yes")
 End Function
 
 Sub SendValues(part, rsp, instanceIndex)
@@ -1801,7 +1881,7 @@ Sub SendValues(part, rsp, instanceIndex)
     Set a = FindDirect(undercutSet, p1)
     Set b = FindDirect(undercutSet, p2)
     Set c = FindDirect(undercutSet, P3)
-    Set d = FindDirect(undercutSet, P4)
+    Set d = FindInstanceParam(part, undercutSet, headSet, P4, instanceIndex)
     Set e = FindDirect(headSet, P5)
     If a Is Nothing Or b Is Nothing Or c Is Nothing Then
         SendResponse rsp, "INCOMPLETE", "", "", "", "", "", "", "", ""
@@ -2051,15 +2131,10 @@ End Function
 
 Function BooleanText(parameter)
     On Error Resume Next
-    On Error Resume Next
-    If CBool(parameter.value) Then
+    If BoolValueOf(parameter) Then
         BooleanText = "true"
     Else
         BooleanText = "false"
-    End If
-    If Err.Number <> 0 Then
-        Err.Clear
-        BooleanText = LCase(Trim(CStr(parameter.ValueAsString)))
     End If
     Err.Clear
 End Function
@@ -2591,6 +2666,67 @@ End Sub
 '==================================================================
 
 Dim gPart, gDoc
+
+'------------------------------------------------------------------
+' Finds a parameter of one instance even when the CATPart stores it
+' in another set than expected: the preferred set first, then the
+' second set, then the whole parameter tree (nth match = nth
+' instance). HAS_EXTERNAL_FACE, for example, lives in the UNDERCUT
+' set on some templates and next to UNDERCUT_LENGTH on others.
+'------------------------------------------------------------------
+Function FindInstanceParam(part, primarySet, secondarySet, wantedName, instanceIndex)
+    On Error Resume Next
+    Dim p, all, pick
+    Set FindInstanceParam = Nothing
+
+    Set p = Nothing
+    If Not primarySet Is Nothing Then Set p = FindDirect(primarySet, wantedName)
+    If p Is Nothing And Not secondarySet Is Nothing Then Set p = FindDirect(secondarySet, wantedName)
+
+    If p Is Nothing Then
+        Set all = NewStore()
+        CollectNamedParams part.Parameters.RootParameterSet, wantedName, all
+        If all.Count > 0 Then
+            pick = instanceIndex
+            If pick < 1 Then pick = 1
+            If pick > all.Count Then pick = all.Count
+            Set p = all.Item(pick)
+        End If
+    End If
+
+    Set FindInstanceParam = p
+    Err.Clear
+End Function
+
+'------------------------------------------------------------------
+' Every parameter of the tree whose leaf name matches, in tree order.
+'------------------------------------------------------------------
+Sub CollectNamedParams(parentSet, wantedName, result)
+    On Error Resume Next
+    Dim direct, childSets, child, i
+
+    Set direct = Nothing
+    Set direct = parentSet.DirectParameters
+    Err.Clear
+    If Not direct Is Nothing Then
+        For i = 1 To direct.Count
+            If StrComp(LeafName(CStr(direct.Item(i).Name)), wantedName, vbTextCompare) = 0 Then
+                result.Add result.Count + 1, direct.Item(i)
+            End If
+        Next
+    End If
+    Err.Clear
+
+    Set childSets = Nothing
+    Set childSets = parentSet.ParameterSets
+    Err.Clear
+    If childSets Is Nothing Then Exit Sub
+    For i = 1 To childSets.Count
+        Set child = childSets.Item(i)
+        CollectNamedParams child, wantedName, result
+    Next
+    Err.Clear
+End Sub
 
 Function SessionDir()
     On Error Resume Next
