@@ -72,6 +72,7 @@ namespace ProfessionalPowerCopyCatalogModern
             _heartbeatTimer.Tick += async (_, __) => await RenewLeaseSilentlyAsync();
 
             LoadLocalTemplateConfiguration();
+            LoadLifterOverrides();
             ICollectionView view = CollectionViewSource.GetDefaultView(CatalogItems);
             view.Filter = FilterCatalogItem;
             ConnectToCatia();
@@ -156,6 +157,14 @@ namespace ProfessionalPowerCopyCatalogModern
 
             foreach (CatalogItem serverItem in response.Items ?? new List<CatalogItem>())
             {
+                // Cards the user flagged manually with the "STROKE setup"
+                // button (persisted locally) always run the lifter workflow.
+                if (!string.IsNullOrWhiteSpace(serverItem.Id) &&
+                    _lifterOverrides.Contains(serverItem.Id.Trim()))
+                {
+                    serverItem.Workflow = "lifter";
+                }
+
                 CatalogItem local = FindLocalConfig(serverItem);
                 if (local != null)
                 {
@@ -481,15 +490,12 @@ namespace ProfessionalPowerCopyCatalogModern
             LifterWorkflowBadge.Visibility = IsLifterTemplate(SelectedItem)
                 ? Visibility.Visible
                 : Visibility.Collapsed;
-            TemplateMetaText.Text = SelectedItem == null
-                ? string.Empty
-                : "ID: " + (string.IsNullOrWhiteSpace(SelectedItem.Id) ? "—" : SelectedItem.Id.Trim())
-                  + "  •  PowerCopy: " + (string.IsNullOrWhiteSpace(SelectedItem.PowerCopyName) ? "—" : SelectedItem.PowerCopyName)
-                  + "  •  Workflow: " + (string.IsNullOrWhiteSpace(SelectedItem.Workflow) ? "none" : SelectedItem.Workflow);
+            TemplateMetaText.Text = BuildTemplateMetaText();
             StatusText.Text = SelectedItem == null
                 ? "Select a verified engineering template."
                 : "Ready. Use the template in CATIA, then run its integrated check.";
             UseInCatiaButton.IsEnabled = SelectedItem != null;
+            StrokeButton.IsEnabled = SelectedItem != null;
             RunCheckButton.IsEnabled = false;
             PackageStatusText.Text = SelectedItem == null
                 ? "Select a template."
@@ -511,6 +517,7 @@ namespace ProfessionalPowerCopyCatalogModern
                 ConnectionText.Foreground = BrushFrom("#166534");
                 ConnectionText.Text = "CATIA connected";
                 UseInCatiaButton.IsEnabled = SelectedItem != null;
+                StrokeButton.IsEnabled = SelectedItem != null;
             }
             catch (Exception ex)
             {
@@ -522,6 +529,7 @@ namespace ProfessionalPowerCopyCatalogModern
                 ConnectionText.Text = "CATIA offline";
                 // Keep the action available so the user can start CATIA and click again.
                 UseInCatiaButton.IsEnabled = SelectedItem != null;
+                StrokeButton.IsEnabled = SelectedItem != null;
                 StatusText.Text = ex.Message;
             }
         }
@@ -714,6 +722,7 @@ namespace ProfessionalPowerCopyCatalogModern
             finally
             {
                 UseInCatiaButton.IsEnabled = SelectedItem != null;
+                StrokeButton.IsEnabled = SelectedItem != null;
             }
         }
 
@@ -730,6 +739,152 @@ namespace ProfessionalPowerCopyCatalogModern
         // ================================================================
         // Lifter Studio integration (C# port of the Lifter catvba macro)
         // ================================================================
+
+        private string BuildTemplateMetaText()
+        {
+            if (SelectedItem == null) return string.Empty;
+            return "ID: " + (string.IsNullOrWhiteSpace(SelectedItem.Id) ? "—" : SelectedItem.Id.Trim())
+                   + "  •  PowerCopy: " + (string.IsNullOrWhiteSpace(SelectedItem.PowerCopyName) ? "—" : SelectedItem.PowerCopyName)
+                   + "  •  Workflow: " + (string.IsNullOrWhiteSpace(SelectedItem.Workflow) ? "none" : SelectedItem.Workflow);
+        }
+
+        private void UpdateLifterIndicator()
+        {
+            LifterWorkflowBadge.Visibility = IsLifterTemplate(SelectedItem)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            TemplateMetaText.Text = BuildTemplateMetaText();
+        }
+
+        // ------------------------------------------------------------------
+        // Manual lifter marking: the "STROKE setup" button flags the selected
+        // card as a lifter template on this PC (persisted under
+        // %LOCALAPPDATA%\Estichara\MoldAutomationCatalog\lifter-templates.json).
+        // This makes the workflow independent from the server catalog column,
+        // the package manifest and catalog.json Id matching: the user marks a
+        // card once, every later session runs the full lifter workflow.
+        // ------------------------------------------------------------------
+
+        private readonly HashSet<string> _lifterOverrides = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        private static string LifterOverridesPath()
+        {
+            return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Estichara", "MoldAutomationCatalog", "lifter-templates.json");
+        }
+
+        private void LoadLifterOverrides()
+        {
+            try
+            {
+                if (!File.Exists(LifterOverridesPath())) return;
+                var serializer = new JavaScriptSerializer();
+                List<string> ids = serializer.Deserialize<List<string>>(File.ReadAllText(LifterOverridesPath()));
+                if (ids == null) return;
+                foreach (string id in ids)
+                {
+                    if (!string.IsNullOrWhiteSpace(id)) _lifterOverrides.Add(id.Trim());
+                }
+            }
+            catch
+            {
+                // A corrupted override file must never block the application.
+            }
+        }
+
+        private void MarkSelectedAsLifter()
+        {
+            if (SelectedItem != null) SelectedItem.Workflow = "lifter";
+
+            string id = (SelectedItem?.Id ?? string.Empty).Trim();
+            if (id.Length == 0 || _lifterOverrides.Contains(id))
+            {
+                UpdateLifterIndicator();
+                return;
+            }
+
+            _lifterOverrides.Add(id);
+            try
+            {
+                string path = LifterOverridesPath();
+                string dir = Path.GetDirectoryName(path);
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                File.WriteAllText(path, new JavaScriptSerializer().Serialize(_lifterOverrides.ToList()));
+            }
+            catch
+            {
+                // Persistence is a convenience only - the in-memory flag still
+                // applies for this session.
+            }
+            UpdateLifterIndicator();
+        }
+
+        /// <summary>"STROKE setup" button: explicit lifter setup on the active
+        /// destination CATPart - reads STROKE_Distance if present, otherwise
+        /// runs the one-time measurement (main body bounding box width) and
+        /// creates the parameter. On success the selected card is marked as a
+        /// lifter template on this PC, so "Use in CATIA" then runs the full
+        /// lifter workflow (STROKE link, Draft formulas, Lifter Studio).</summary>
+        private void StrokeButton_OnClick(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (SelectedItem == null) throw new InvalidOperationException("Select a catalog item.");
+                if (_catia == null) ConnectToCatia();
+                if (_catia == null) return;
+
+                if (!(_catia.ActiveDocument is MECMOD.PartDocument))
+                    throw new InvalidOperationException(
+                        "Open (or activate) the destination CATPart in CATIA first - the STROKE setup reads and creates STROKE_Distance on it.");
+                var destination = (MECMOD.PartDocument)_catia.ActiveDocument;
+                dynamic part = destination.Part;
+
+                if (LifterEngine.StrokeParameterExists(part))
+                {
+                    string current = LifterEngine.GetStrokeText(part);
+                    MessageBoxResult remeasure = MessageBox.Show(this,
+                        "STROKE_Distance = " + (string.IsNullOrEmpty(current) ? "?" : current)
+                        + " mm already exists on this CATPart.\n\nRe-measure it from the main body?",
+                        "STROKE setup", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                    if (remeasure != MessageBoxResult.Yes)
+                    {
+                        StatusText.Text = "STROKE_Distance = " + (string.IsNullOrEmpty(current) ? "?" : current)
+                                          + " mm - you can click 'Use in CATIA'.";
+                        MarkSelectedAsLifter();
+                        return;
+                    }
+                }
+
+                StatusText.Text = "STROKE setup - measuring the destination CATPart...";
+                var setup = new LifterSetupWindow(_catia, destination) { Owner = this };
+                bool? dialogResult = setup.ShowDialog();
+                if (dialogResult != true)
+                {
+                    StatusText.Text = "STROKE setup cancelled.";
+                    return;
+                }
+                if (!LifterEngine.StrokeParameterExists(part))
+                    throw new InvalidOperationException(
+                        "STROKE_Distance was not created. Retry the measurement or choose another body.");
+
+                MarkSelectedAsLifter();
+
+                string value = LifterEngine.GetStrokeText(part);
+                StatusText.Text = "STROKE_Distance = " + (string.IsNullOrEmpty(value) ? "?" : value)
+                                  + " mm - now click 'Use in CATIA'.";
+                MessageBox.Show(this,
+                    "STROKE_Distance = " + (string.IsNullOrEmpty(value) ? "?" : value)
+                    + " mm was created on the destination CATPart.\n\n"
+                    + "This card is now marked as a lifter template on this PC - "
+                    + "'Use in CATIA' will run the full lifter workflow.",
+                    "STROKE setup", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(FriendlyApiError(ex.Message), "STROKE setup", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
 
         /// <summary>A template flagged with Workflow = "lifter" (server catalog,
         /// package manifest or local catalog.json) runs the integrated Lifter

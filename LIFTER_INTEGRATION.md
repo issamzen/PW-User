@@ -24,6 +24,10 @@ project always compiles the same way.
 
 ## New "Use in CATIA" flow for a lifter template
 
+If the card is not flagged by the server catalog, the package manifest or
+`catalog.json`, click **STROKE setup** once on the card first — it runs the
+one-time measurement and marks the card locally (see flag source 4 above).
+
 ```
 Use in CATIA  (template flagged Workflow = "lifter")
  ├─ 1. STEP 1 — read STROKE_Distance on the destination CATPart (direct COM,
@@ -92,6 +96,16 @@ Use in CATIA  (template flagged Workflow = "lifter")
    local `CatPartPath` / `CheckScriptDirectory` are only a development
    convenience — the Use in CATIA flow **never falls back** to them when the
    server package is unavailable.
+
+4. **Manual marking with the "STROKE setup" button** (always available, no
+   configuration): clicking **STROKE setup** on a card runs the lifter setup on
+   the active destination CATPart AND marks that card as a lifter template on
+   this PC. The marking is persisted in
+   `%LOCALAPPDATA%\Estichara\MoldAutomationCatalog\lifter-templates.json`
+   and survives restarts — one click per card per PC, then every later
+   "Use in CATIA" runs the full lifter workflow automatically. This is the
+   recommended path when the server catalog and the package manifest do not
+   carry the flag.
 
 **How to verify the flag resolved:** select the lifter card in the dashboard —
 if it is flagged correctly, a blue **"Lifter workflow"** badge appears next to

@@ -332,28 +332,41 @@
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="12"/>
                         <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="12"/>
+                        <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
-                    <Button x:Name="UseInCatiaButton" Style="{StaticResource PrimaryButton}" Click="UseInCatiaButton_OnClick">
+                    <!-- Explicit lifter setup: reads the destination CATPart and
+                         creates STROKE_Distance (one-time measurement). Also marks
+                         this card as a lifter template on this PC. -->
+                    <Button x:Name="StrokeButton" Style="{StaticResource SecondaryButton}"
+                            Click="StrokeButton_OnClick" IsEnabled="False"
+                            ToolTip="Read the destination CATPart and create STROKE_Distance from the main body measurement.">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE735;" FontFamily="Segoe MDL2 Assets" Margin="0,0,8,0"/>
+                            <TextBlock Text="STROKE setup"/>
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="UseInCatiaButton" Grid.Column="2" Style="{StaticResource PrimaryButton}" Click="UseInCatiaButton_OnClick">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#xE768;" FontFamily="Segoe MDL2 Assets" Foreground="White" Margin="0,0,8,0"/>
                             <TextBlock Text="Use in CATIA" Foreground="White"/>
                         </StackPanel>
                     </Button>
-                    <Button x:Name="RunCheckButton" Grid.Column="2" Style="{StaticResource PrimaryButton}" Background="#0F766E"
+                    <Button x:Name="RunCheckButton" Grid.Column="4" Style="{StaticResource PrimaryButton}" Background="#0F766E"
                             Click="RunCheckButton_OnClick" IsEnabled="False">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#xE9D5;" FontFamily="Segoe MDL2 Assets" Foreground="White" Margin="0,0,8,0"/>
                             <TextBlock Text="Run check" Foreground="White"/>
                         </StackPanel>
                     </Button>
-                    <Button x:Name="CloseSourceButton" Grid.Column="4" Style="{StaticResource SecondaryButton}"
+                    <Button x:Name="CloseSourceButton" Grid.Column="6" Style="{StaticResource SecondaryButton}"
                             Click="CloseSourceButton_OnClick" IsEnabled="False">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#xE711;" FontFamily="Segoe MDL2 Assets" Margin="0,0,8,0"/>
                             <TextBlock Text="Close source"/>
                         </StackPanel>
                     </Button>
-                    <Grid Grid.Row="1" Grid.ColumnSpan="5" Margin="2,10,2,0">
+                    <Grid Grid.Row="1" Grid.ColumnSpan="7" Margin="2,10,2,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
